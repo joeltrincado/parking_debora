@@ -1,6 +1,6 @@
 import flet as ft
-from database import init_db, get_all_entries, insert_entry, delete_entry, get_entry_by_code, insert_out, get_all_outs, set_config, get_config, get_entry_by_type, get_price_unique, set_price
-from helpers.helpers import getDatacell, getDataColumns
+from database import init_db, get_all_entries, insert_entry, delete_entry, get_entry_by_code, get_price_by_day, get_price_by_type, insert_out, set_all_prices, get_all_outs, set_config, delete_all_outs, get_config, get_entry_by_type, get_price_unique, set_price
+from helpers.helpers import getDatacell, getDataColumns, print_ticket_usb
 from components.Container import Container
 from components.Button import Button
 from components.TextField import TextField
@@ -10,6 +10,7 @@ from datetime import datetime
 import json
 import pandas as pd
 import os
+import re
 
 
 def main(page: ft.Page):
@@ -17,30 +18,108 @@ def main(page: ft.Page):
     
 
     # GLOBALS VARS
-    current_tab = 0
-    bisnness_name = "Estacionamiento Debora Hernández"
-    fee = 0
-    data_table = []
-    entrys = get_all_entries() 
-    outs = []
-    total = 0
-    nBoxes = 19
-    nBoxesAirBnb = 2
-    config = None
-    datacells = getDatacell(entrys)
+    state = {
+        "current_tab": 0,
+        "business_name": "Estacionamiento CECI",
+        "fee": 0,
+        "entries": [],
+        "outs": [],
+        "total": 0,
+        "nBoxes": 19,
+        "nBoxesAirBnb": 2,
+        "config": None,
+        "printer": None,
+    }
+    datacells = getDatacell(state["entries"])
     columns = getDataColumns(["FOLIO", "CÓDIGO", "FECHA", "HORA", "TIPO DE ENTRADA"])
-    printer = None
+    PASSWORD = "1234"  # Puedes cambiarla o hacerla configurable
+
+    impresora_config = get_config("impresora")
+    if impresora_config:
+        try:
+            config = json.loads(impresora_config)
+            state["config"] = config
+            state["printer"] = config.get("valor", None)
+        except:
+            message("Error al cargar la configuración de la impresora")
+
+
 
 
     ############################################################################################################
 
     # PAGE PROPIERTIES
-    page.title = "Control " + bisnness_name
+    page.title = "Control " + state["business_name"]
     page.theme_mode = ft.ThemeMode.DARK
 
     ############################################################################################################
     
     # FUCTIONS
+
+    def handle_menu_protected(target_index):
+        def go():
+            show_page(target_index, callback=load_config if target_index == 1 else load_prices if target_index == 2 else None)
+
+        show_password_alert("Acceso restringido", go)
+
+
+    def show_password_alert(title, on_success):
+
+        def validate_password(e):
+            if password_field.value == PASSWORD:
+                password_field.value = ""
+                alert_password.open = False
+                on_success()
+            else:
+                password_field.error_text = "Contraseña incorrecta"
+            page.update()
+
+        password_field = ft.TextField(label="Contraseña", password=True, width=300, on_submit=validate_password)
+        alert_password.title = ft.Text(title)  # <- CORRECTO
+        alert_password.content = password_field
+        alert_password.actions = [
+            ft.TextButton("Cancelar", on_click=lambda e: close_password_alert()),
+            ft.TextButton("Aceptar", on_click=validate_password)
+        ]
+        alert_password.open = True
+        page.update()
+
+
+    def close_password_alert():
+        alert_password.open = False
+        page.update()
+
+
+    def guardar_cajones(e):
+        try:
+            state["nBoxes"] = int(input_normal_boxes.value)
+            state["nBoxesAirBnb"] = int(input_airbnb_boxes.value)
+            set_config("cajones_normales", str(state["nBoxes"]))
+            set_config("cajones_airbnb", str(state["nBoxesAirBnb"]))
+            colorBoxs()
+            colorBoxsAirBnb()
+            alert_config_cajones.open = False
+            page.open(ft.SnackBar(ft.Text("Configuración actualizada")))
+        except ValueError:
+            page.open(ft.SnackBar(ft.Text("Valores inválidos")))
+        page.update()
+
+
+
+    def load_boxes_config():
+        try:
+            cajones = get_config("cajones_normales")
+            airbnb = get_config("cajones_airbnb")
+            state["nBoxes"] = int(cajones) if cajones else 19
+            state["nBoxesAirBnb"] = int(airbnb) if airbnb else 2
+        except:
+            state["nBoxes"] = 19
+            state["nBoxesAirBnb"] = 2
+
+
+    def close_alert_outs(e):
+        alert_clean_outs.open = False
+        page.update()
 
     def get_plain_data():
         registros = get_all_outs()
@@ -50,20 +129,23 @@ def main(page: ft.Page):
         ]
 
     def download_report_csv(e):
-
         plain_data = get_plain_data()
         columns = ["ID", "Código", "Hora de entrada", "Fecha de entrada", "Hora de salida", "Fecha de salida", "Tipo de entrada", "Precio", "Total"]
         df = pd.DataFrame(plain_data, columns=columns)
 
         try:
-            
-            df.to_csv(path_or_buf=f'reporte.csv', index=False)
+            df.to_csv(path_or_buf='reporte.csv', index=False)
             snack_bar = ft.SnackBar(ft.Text(f"Reporte guardado en {os.getcwd()}"))
             page.open(snack_bar)
+            
+            # Mostrar alerta después de guardar
+            alert_clean_outs.open = True
         except Exception as ex:
             snack_bar = ft.SnackBar(ft.Text("Error al guardar el reporte: " + str(ex)))
             page.open(snack_bar)
+        
         page.update()
+
 
     def show_page(index, callback=None):
     # Oculta todas
@@ -77,56 +159,190 @@ def main(page: ft.Page):
         page.update()
 
     def save_config(e):
-        nonlocal config, printer
-        config = {
-                "valor": usb_selector.value,
-            }
-        printer = usb_selector.value
-        set_config("impresora", json.dumps(config)) 
+        selected_printer = usb_selector.value
+        available_printers = get_usb_printers()
+
+        if not available_printers:
+            page.open(ft.SnackBar(ft.Text("No hay impresoras disponibles", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE), bgcolor=ft.Colors.RED_400))
+            page.update()
+            return
+
+        if selected_printer not in available_printers:
+            page.open(ft.SnackBar(ft.Text("Selecciona una impresora válida", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE), bgcolor=ft.Colors.RED_400))
+            page.update()
+            return
+
+        if not is_printer_connected(selected_printer):
+            page.open(ft.SnackBar(ft.Text("La impresora seleccionada no está conectada", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE), bgcolor=ft.Colors.RED_400))
+            page.update()
+            return
+
+        state["config"] = {"valor": selected_printer}
+        state["printer"] = selected_printer
+        set_config("impresora", json.dumps(state["config"]))
         show_page(0)
-        page.open(ft.SnackBar(ft.Text("Configuración guardada")))
+        page.open(ft.SnackBar(ft.Text("Impresora configurada correctamente")))
+        page.update()
+
+
 
     def colorBoxs():
-        nonlocal nBoxes
         e = get_entry_by_type("Boleto normal")
         n = len(e) if e else 0
-        diff = nBoxes - n
+        diff = state["nBoxes"] - n
         boxs.value = str(diff)
-        if diff <= 1:
-            containerBoxs.gradient = ft.LinearGradient(begin=ft.alignment.top_left, end=ft.alignment.bottom_right, colors=["#FF0000", "#FF0000"])
-        elif 1 < diff < 5:
-            containerBoxs.gradient = ft.LinearGradient(begin=ft.alignment.top_left, end=ft.alignment.bottom_right, colors=["#FFA500", "#FFA500"])
-        else:
-            containerBoxs.gradient = ft.LinearGradient(begin=ft.alignment.top_left, end=ft.alignment.bottom_right, colors=["#014601", "#2F922F"])
+        containerBoxs.gradient = ft.LinearGradient(
+            begin=ft.alignment.top_left,
+            end=ft.alignment.bottom_right,
+            colors=["#FF0000", "#FF0000"] if diff <= 1 else ["#FFA500", "#FFA500"] if diff < 5 else ["#014601", "#2F922F"]
+        )
         page.update()
     def colorBoxsAirBnb():
-        nonlocal  nBoxesAirBnb
         e = get_entry_by_type("Boleto AirBnb")
         n = len(e) if e else 0
-        diff = nBoxesAirBnb - n
+        diff = state["nBoxesAirBnb"] - n
         boxsText_airbnb.value = str(diff)
         page.update()
+
     def getBD():
-        nonlocal entrys
-        entrys = get_all_entries()
-        datacells = getDatacell(entrys)
+        state["entries"] = get_all_entries()
+        datacells = getDatacell(state["entries"])
         registers_database.rows.clear()
         registers_database.rows = datacells
         read_qr.value = ""
         read_qr.focus()
         page.update()
 
+    def close_alert_airbnb_pending(e):
+        alert_airbnb_pending.open = False
+        page.update()
+
     def createOut(code, price=0, total=0):
         out_date = datetime.now().strftime("%Y-%m-%d")
         out_time = datetime.now().strftime("%H:%M:%S")
+
+        tiempo_texto = ""
+        if code[6] == "Boleto normal":
+            entrada = datetime.strptime(f"{code[3]} {code[2]}", "%Y-%m-%d %H:%M:%S")
+            salida = datetime.now()
+            duracion = salida - entrada
+            tiempo_total_segundos = duracion.total_seconds()
+            horas = int(tiempo_total_segundos // 3600)
+            minutos = int((tiempo_total_segundos % 3600) // 60)
+
+            tiempo_texto = f" | Tiempo: {horas}h {minutos}min"
+
+            # Si estuvo más de 10h, tarifa de pensión
+            if duracion.total_seconds() >= 36000:
+                _, precio_unitario = get_price_by_type("pension")
+                total = precio_unitario
+                price = precio_unitario
+                tiempo_texto += " | Tarifa tipo pensión aplicada"
+            else:
+                es_jueves = datetime.now().weekday() == 3
+                _, precio_unitario = get_price_by_day(es_jueves)
+                try:
+                    precio_unitario = float(precio_unitario)
+                except:
+                    precio_unitario = 0.0
+                total = horas * precio_unitario
+                if minutos > 0:
+                    total += precio_unitario / 2 if minutos <= 30 else precio_unitario
+                price = precio_unitario
+
+        elif code[6] == "Boleto Pensión":
+            entrada = datetime.strptime(f"{code[3]} {code[2]}", "%Y-%m-%d %H:%M:%S")
+            salida = datetime.now()
+            duracion = salida - entrada
+            dias = duracion.days + 1 if duracion.seconds > 0 else duracion.days
+            _, precio_unitario = get_price_by_type("pension")
+            total = precio_unitario * dias
+            price = precio_unitario
+            tiempo_texto = f" | Tarifa Pensión aplicada ({dias} días)"
+
+        elif code[6] == "Boleto Extraviado":
+            _, precio_unitario = get_price_by_type("extraviado")
+            total = precio_unitario
+            price = precio_unitario
+            tiempo_texto = " | Tarifa Extraviado aplicada"
+
+        else:  # Boleto AirBnb
+            price = 0.0
+            total = 0.0
+            tiempo_texto = " | Entrada tipo AirBnb"
+
+        # Insertar en tabla de salidas
         insert_out(code[1], code[2], code[3], out_time, out_date, code[6], price, total)
-        outs = get_all_outs()
         delete_entry(code[1])
+
+        # 🖨️ Imprimir ticket de salida
+        if state["printer"]:
+            salida_data = {
+                "placa": code[1],
+                "hora_entrada": code[2],
+                "fecha_entrada": code[3],
+                "hora_salida": out_time,
+                "fecha_salida": out_date,
+                "total": f"{total:.2f}",
+                "tipo": code[6]
+            }
+            print_ticket_usb(printer_name=state["printer"], data=salida_data, entrada=False)
+
+        # Refrescar pantalla
         getBD()
-        colorBoxs() 
+        colorBoxs()
         colorBoxsAirBnb()
-        message("Boleto de salida generado con éxito")
+        message(f"Boleto de salida generado. Total: ${total:.2f}{tiempo_texto}")
         page.update()
+
+
+    def delete_all(e):
+        delete_all_outs()
+        alert_delete_registers.open = False
+        snack_bar = ft.SnackBar(ft.Text("Se han borrado los registros de salidas."))
+        page.open(snack_bar)
+        page.update()
+
+    def check_airbnb_pending():
+        boletos = get_entry_by_type("Boleto AirBnb")
+        hoy = datetime.now().date()
+        pendientes = []
+
+        for b in boletos:
+            try:
+                fecha_salida = datetime.strptime(b[5], "%Y-%m-%d").date()
+                if fecha_salida <= hoy:
+                    pendientes.append(b)
+            except:
+                continue
+
+        if pendientes:
+            show_pending_airbnb_alert(pendientes)
+
+    def show_pending_airbnb_alert(pendientes):
+        botones = []
+
+        for boleto in pendientes:
+            texto = f"{boleto[1]} - Sale {boleto[5]}"
+            boton = ft.ElevatedButton(
+                text=texto,
+                on_click=lambda e, b=boleto: handle_airbnb_exit_from_alert(b), height=40, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=5))
+            )
+            botones.append(boton)
+
+        alert_airbnb_pending.content = ft.Column([
+            ft.Text("Boletos tipo AirBnb pendientes de salida:", height=50),
+            *botones
+        ], height=200, scroll=True)
+        alert_airbnb_pending.open = True
+        page.update()
+
+    def handle_airbnb_exit_from_alert(boleto):
+        createOut(boleto)
+        alert_airbnb_pending.open = False
+        page.update()
+        
+
 
     def message(text=None):
         snack_bar = ft.SnackBar(ft.Text("Código no encontrado" if text is None else text, size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE), bgcolor=ft.Colors.RED_400, duration=ft.Duration(seconds=3))
@@ -135,33 +351,71 @@ def main(page: ft.Page):
         read_qr.focus()
         page.update()
 
+    def is_printer_connected(printer_name):
+        try:
+            import win32print
+            hprinter = win32print.OpenPrinter(printer_name)
+            win32print.ClosePrinter(hprinter)
+            return True
+        except:
+            return False
+
+
     def get_usb_printers():
-            try:
-                import win32print
-                return [printer[2] for printer in win32print.EnumPrinters(2)]
-            except:
-                return []
-            
+        try:
+            import win32print
+            return [printer[2] for printer in win32print.EnumPrinters(2)]
+        except:
+            return []
+
     def load_config():
+        usb_selector.options = [ft.dropdown.Option(p) for p in get_usb_printers()]
         try:
             config_json = get_config("impresora")
             if config_json:
                 config = json.loads(config_json)
                 usb_selector.value = config.get("valor", None)
+                state["config"] = config
+                state["printer"] = config.get("valor", None)
         except Exception as e:
             snack_bar = ft.SnackBar(ft.Text(f"Error al cargar la configuración: {e}", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE), bgcolor=ft.Colors.RED_400, duration=ft.Duration(seconds=3))
             page.open(snack_bar)
-            page.update()
+        page.update()
+
 
     def load_prices():
         try:
-            nombre, precio = get_price_unique()
-            name_fee.value = nombre
-            price_fee.value = str(precio)
+            nombre_n, precio_n = get_price_by_type("normal")
+            nombre_j, precio_j = get_price_by_type("jueves")
+            nombre_p, precio_p = get_price_by_type("pension")
+            nombre_e, precio_e = get_price_by_type("extraviado")
+
+            name_fee_normal.value = nombre_n
+            price_fee_normal.value = str(precio_n)
+            name_fee_jueves.value = nombre_j
+            price_fee_jueves.value = str(precio_j)
+            name_fee_pension.value = nombre_p
+            price_fee_pension.value = str(precio_p)
+            name_fee_extraviado.value = nombre_e
+            price_fee_extraviado.value = str(precio_e)
+
             page.update()
         except Exception as e:
-            snack_bar = ft.SnackBar(ft.Text(f"Error al cargar la tarifa: {e}", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE), bgcolor=ft.Colors.RED_400, duration=ft.Duration(seconds=3))
-            page.open(snack_bar)
+            page.open(ft.SnackBar(ft.Text(f"Error al cargar tarifas: {e}")))
+            page.update()
+
+
+
+    def limpiar_salidas():
+        delete_all_outs()
+        alert_clean_outs.open = False
+        page.open(ft.SnackBar(ft.Text("Se han borrado los registros de salidas.")))
+        page.update()
+
+    def close_alert_cajones(e):
+        alert_config_cajones.open = False
+        page.update()
+
 
     
     ############################################################################################################
@@ -169,6 +423,9 @@ def main(page: ft.Page):
     # ONCHANGES & ONSUBMITS
 
     def addAirBnb(plate=""):
+        if not re.match(r"^[A-Z0-9]{6,7}$", plate):
+            message("Placa inválida")
+            return
         if not time_picker.value or not date_picker.value:
             message("Debes seleccionar fecha y hora de salida")
             return
@@ -189,6 +446,15 @@ def main(page: ft.Page):
 
         alert.open = False
         colorBoxsAirBnb()
+        plateField.value = ""
+        date_picker.value = datetime.now().date()
+        time_picker.value = datetime.now().time().replace(second=0, microsecond=0)
+        textTime.visible = False
+        textDate.visible = False
+        rangeTime.visible = True
+        rangeDate.visible = True
+
+        page.update()
         getBD()
 
 
@@ -208,53 +474,127 @@ def main(page: ft.Page):
 
 
     def onSubmitReadQr(e):
-        entry = {
-            #codigo, hora_entrada, precio, status
-            "codigo": str(datetime.now().strftime("%Y%m%d%H%M%S")),
-            "hora_entrada": datetime.now().strftime("%H:%M:%S"),
-            "fecha": datetime.now().strftime("%Y-%m-%d"),
-            "hora_salida": None,
-            "fecha_salida": None,
-            "precio": 0,
-            "status": "Entrada"
-        }
-        if e.control.value == "AutoNuevo":
-            insert_entry(entry["codigo"], entry["hora_entrada"], entry["fecha"], entry["hora_salida"], entry["fecha_salida"], "Boleto normal", entry["precio"], "Boleto normal")
-            getBD()
-            colorBoxs()
-        elif e.control.value == "AirBnb":
+        valor = e.control.value.strip().lower()
+        now = datetime.now()
+        codigo = now.strftime("%Y%m%d%H%M%S")
+        hora = now.strftime("%H:%M:%S")
+        fecha = now.strftime("%Y-%m-%d")
+
+        def imprimir_ticket_y_guardar(codigo, fecha, hora, tipo):
+            if not state["printer"]:
+                message("No hay impresora configurada. No se registró la entrada.")
+                return False
+            try:
+                data = {
+                    "placa": codigo,
+                    "fecha_entrada": fecha,
+                    "hora_entrada": hora,
+                    "tipo": tipo
+                }
+                print_ticket_usb(printer_name=state["printer"], data=data)
+
+                insert_entry(
+                    codigo=codigo,
+                    hora_entrada=hora,
+                    fecha_entrada=fecha,
+                    hora_salida=None,
+                    fecha_salida=None,
+                    type_entry=tipo,
+                    precio=0,
+                    status="Entrada"
+                )
+
+                getBD()
+                colorBoxs()
+                if tipo == "Boleto AirBnb":
+                    colorBoxsAirBnb()
+
+                # ✅ Mensaje de confirmación
+                texto = f"Boleto impreso correctamente a las {hora} del {fecha}"
+                page.open(ft.SnackBar(ft.Text(texto)))
+                page.update()
+                return True
+            except Exception as ex:
+                message(f"Error al imprimir: {ex}")
+                return False
+
+
+        if valor == "autonuevo":
+            imprimir_ticket_y_guardar(codigo, fecha, hora, "Boleto normal")
+
+        elif valor == "pension":
+            imprimir_ticket_y_guardar(codigo, fecha, hora, "Boleto Pensión")
+
+        elif valor == "airbnb":
+            if not state["printer"]:
+                message("No hay impresora configurada. No se registró la entrada.")
+                return
             alert.open = True
             page.update()
+
+        elif valor == "extraviado":
+            _, precio_unitario = get_price_by_type("extraviado")
+            message(f"Boleto extraviado. Tarifa aplicada: ${precio_unitario:.2f}")
+            if not state["printer"]:
+                message("No hay impresora configurada. No se imprimió el ticket.")
+                return
+            print_ticket_usb(
+                printer_name=state["printer"],
+                data={"placa": codigo, "fecha_entrada": fecha, "hora_entrada": hora, "tipo": "Boleto extraviado"}
+            )
+            insert_entry(
+                codigo=codigo,
+                hora_entrada=hora,
+                fecha_entrada=fecha,
+                hora_salida=None,
+                fecha_salida=None,
+                type_entry="Boleto extraviado",
+                precio=precio_unitario,
+                status="Entrada"
+            )
+
         else:
             code = get_entry_by_code(e.control.value)
             if code is None:
                 message()
             else:
-                createOut(code) if code[6] == "Boleto normal" else airBnbOut(code)
-
-    
-            
+                createOut(code) if "Boleto" in code[6] else airBnbOut(code)
 
     def onChangePage(e):
-        nonlocal current_tab
-        current_tab = e
-
-        match current_tab:
-            case 0:
-                show_page(0)
-            case 1:
-                show_page(1, callback=load_config)
-            case 2:
-                show_page(2, callback=load_prices) 
+        # Página pública
+        if e == 0:
+            show_page(0)
+        # Páginas protegidas
+        elif e in [1, 2]:
+            handle_menu_protected(e)
 
     ############################################################################################################
 
     # ONCLICKS
+
+    def abrir_config_cajones():
+        show_password_alert("Acceso a configuración", lambda: open_cajones_config())
+
+    def download_report_secure(e):
+        show_password_alert("Descargar reporte", lambda: download_report_csv(e))
+
+    def delete_registers_secure(e):
+        show_password_alert("Borrar registros", lambda: delete_registers(e))
+
+
+    def open_cajones_config():
+        input_normal_boxes.value = str(state["nBoxes"])
+        input_airbnb_boxes.value = str(state["nBoxesAirBnb"])
+        alert_config_cajones.open = True
+        page.update()
+
     def delete_registers(e):
         alert_delete_registers.open = True
+        page.update()
 
     def closeAlertRegisters(e):
         alert_delete_registers.open = False
+        page.update()
 
     def close_alert(e):
         alert.open = False
@@ -273,25 +613,116 @@ def main(page: ft.Page):
         page.update()
 
     def handle_accept_airbnb(e):
-        addAirBnb(plate=plate.value)
-        colorBoxsAirBnb()
+        placa = plateField.value.strip()
+        if not placa:
+            message("Debes ingresar la placa")
+            return
+        if not re.match(r"^[A-Z0-9]{5,8}$", placa):
+            message("Placa inválida. Usa de 5 a 8 caracteres alfanuméricos")
+            return
+        if not time_picker.value or not date_picker.value:
+            message("Debes seleccionar fecha y hora de salida")
+            return
+
+        addAirBnb(plate=placa)
         alert.open = False
         page.update()
 
+
     def save_fee(e):
-        nonlocal fee
-        set_price(name_fee.value, price_fee.value)
-        fee = float(price_fee.value)
+        set_all_prices(
+            name_fee_normal.value, float(price_fee_normal.value),
+            name_fee_jueves.value, float(price_fee_jueves.value),
+            name_fee_pension.value, float(price_fee_pension.value),
+            name_fee_extraviado.value, float(price_fee_extraviado.value)
+                )
         show_page(0)
-        page.open(ft.SnackBar(ft.Text("Configuración guardada")))
         page.update()
+
+    def show_lost_ticket_dialog():
+        entradas = get_all_entries()
+        botones = []
+
+        for entrada in entradas:
+            texto = f"{entrada[1]} - {entrada[3]} {entrada[2]} - {entrada[6]}"
+            boton = ft.TextButton(
+                text=texto,
+                on_click=lambda e, code=entrada: confirm_lost_ticket_exit(code),
+                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=5))
+            )
+            botones.append(boton)
+
+        alert_lost_ticket.content = ft.Column([
+            ft.Text("Selecciona la entrada extraviada:", size=16),
+            *botones
+        ], scroll=True, height=300)
+        alert_lost_ticket.open = True
+        page.update()
+
+    def confirm_lost_ticket_exit(code):
+        _, precio_unitario = get_price_by_type("extraviado")
+        hora = datetime.now().strftime("%H:%M:%S")
+        fecha = datetime.now().strftime("%Y-%m-%d")
+        insert_out(code[1], code[2], code[3], hora, fecha, "Boleto Extraviado", precio_unitario, precio_unitario)
+        delete_entry(code[1])
+        message(f"Boleto extraviado cerrado. Total: ${precio_unitario:.2f}")
+        alert_lost_ticket.open = False
+        getBD()
+        colorBoxs()
+        colorBoxsAirBnb()
+        page.update()
+
+
+
+    def close_alert_lost():
+        alert_lost_ticket.open = False
+        page.update()
+
 
     ############################################################################################################
 
 
  
     # PAGES
-    plate = TextField(label="Placa").build()
+    input_normal_boxes = TextField(label="Cajones normales", keyboard_type=ft.KeyboardType.NUMBER).build()
+    input_airbnb_boxes = TextField(label="Cajones AirBnb", keyboard_type=ft.KeyboardType.NUMBER).build()
+    plateField = TextField(label="Placa").build()
+
+    alert_password = ft.AlertDialog(
+    title=ft.Text("Autenticación requerida"),
+    content=ft.Text("Cargando..."),
+    actions=[
+        ft.TextButton("Cancelar", on_click=lambda e: close_password_alert())
+    ], shape=ft.RoundedRectangleBorder(radius=10)
+)
+
+
+    alert_lost_ticket = Alert(
+        title="Boleto Extraviado",
+        content=ft.Text("Cargando..."),
+        onCancel=lambda e: close_alert_lost(),
+        height=400,
+        width=450
+    ).build()
+
+
+
+
+    alert_config_cajones = Alert(
+        title="Editar número de cajones",
+        content=ft.Column([
+            input_normal_boxes,
+            input_airbnb_boxes
+        ]),
+        action="Guardar",
+        onAdd=guardar_cajones,
+        onCancel=close_alert_cajones,
+        cancel="Cancelar",
+        width=400,
+        height=150
+    ).build()
+    alert_config_cajones.open = False
+
     time_picker = ft.TimePicker(
         confirm_text="Confirmar",
         cancel_text="Cancelar",
@@ -313,7 +744,7 @@ def main(page: ft.Page):
     rangeDate = Button(text="FECHA", on_click=lambda _: page.open(date_picker), icon=ft.Icons.DATE_RANGE, bgcolor=ft.Colors.BLACK54).build()
     contentAlert = ft.Column(
         [
-            plate,
+            plateField,
             textTime,
             rangeTime,
             rangeDate,
@@ -321,12 +752,12 @@ def main(page: ft.Page):
         ], expand=True
     )
     read_qr = TextField(label="Leer QR", keyboard_type=ft.KeyboardType.NUMBER, onSubmit=onSubmitReadQr).build()
-    download_report = Button(text="DESCARGAR REPORTE", on_click=download_report_csv).build()
-    delete_registers_button = Button(text="BORRAR REGISTROS", bgcolor=ft.Colors.RED_400, icon=ft.Icons.DELETE).build()
-    alert_delete_registers = Alert(content=ft.Text("Seguro que desea borrar los registros?"), action="Borrar", onAdd=delete_registers, onCancel=closeAlertRegisters).build()
+    download_report = Button(text="DESCARGAR REPORTE", on_click=download_report_secure).build()
+    delete_registers_button = Button(text="BORRAR REGISTROS", bgcolor=ft.Colors.RED_400, icon=ft.Icons.DELETE, on_click=delete_registers_secure).build()
+    alert_delete_registers = Alert(content=ft.Text("Seguro que desea borrar los registros?"), action="Borrar", onAdd=delete_all, onCancel=closeAlertRegisters).build()
     alert_delete_registers.open = False
-    boxs = ft.Text("19", size=74, text_align=ft.TextAlign.CENTER, expand=True)
-    boxsText_airbnb = ft.Text("2", size=74, text_align=ft.TextAlign.CENTER, expand=True)
+    boxs = ft.Text("19", size=44, text_align=ft.TextAlign.CENTER, expand=True)
+    boxsText_airbnb = ft.Text("2", size=44, text_align=ft.TextAlign.CENTER, expand=True)
     content_data = ft.Column(
         [
             ft.Row(
@@ -341,7 +772,10 @@ def main(page: ft.Page):
     )
     last_entry = ft.Column(
         [
-            ft.Text("CAJONES DISPONIBLES", size=26, weight=ft.FontWeight.BOLD),
+            ft.Row([
+                ft.Text("CAJONES DISPONIBLES", size=16, weight=ft.FontWeight.BOLD, expand=True),
+                ft.IconButton(icon=ft.icons.SETTINGS, icon_color=ft.Colors.GREY_500, tooltip="Editar cajones", on_click=lambda e: abrir_config_cajones())
+            ]),
             ft.Row([
                 boxs
             ], expand=True, alignment=ft.MainAxisAlignment.CENTER
@@ -350,15 +784,18 @@ def main(page: ft.Page):
     )
     boxs_airbnb = ft.Column(
         [
-            ft.Text("CAJONES DISPONIBLES AIRBNB", size=16, weight=ft.FontWeight.BOLD),
+            ft.Row([
+                ft.Text("CAJONES DISPONIBLES AIRBNB", size=16, weight=ft.FontWeight.BOLD, expand=True),
+                ft.IconButton(icon=ft.icons.SETTINGS, icon_color=ft.Colors.GREY_500, tooltip="Editar cajones", on_click=lambda e: abrir_config_cajones())
+            ]),
             ft.Row([
                 boxsText_airbnb
             ], expand=True, alignment=ft.MainAxisAlignment.CENTER
             )
         ]
     )
-    containerBoxs = Container(business_name=bisnness_name, content=last_entry).build()
-    containerBoxs_airbnb = Container(business_name=bisnness_name, content=boxs_airbnb).build()
+    containerBoxs = Container(business_name=state["business_name"], content=last_entry, height=130).build()
+    containerBoxs_airbnb = Container(business_name=state["business_name"], content=boxs_airbnb, height=130).build()
 
     registers_database = ft.DataTable(
     columns= columns,
@@ -366,27 +803,66 @@ def main(page: ft.Page):
     expand=True,
     )
 
+    alert_airbnb_pending = Alert(
+        title="Boletos AirBnb Pendientes",
+        content=ft.Text(""),
+        onCancel=close_alert_airbnb_pending,
+        action=None,
+        height=250,
+        width=300
+    ).build()
+    alert_airbnb_pending.open = False
+
+    alert_clean_outs = Alert(
+        title="¿Limpiar base de datos de salidas?",
+        content=ft.Text("¿Deseas borrar todos los registros de salidas después de descargar el reporte?"),
+        onAdd=lambda e: limpiar_salidas(),
+        onCancel=close_alert_outs,
+        action="Sí, borrar",
+        cancel="No borrar",
+        height=300,
+        width=400
+    ).build()
+    alert_clean_outs.open = False
+
+    btn_extraviado_manual = Button(
+    text="DAR SALIDA POR EXTRAVÍO",
+    icon=ft.Icons.REMOVE_CIRCLE_OUTLINE,
+    bgcolor=ft.Colors.ORANGE_300,
+    on_click=lambda e: show_lost_ticket_dialog()
+).build()
+
+
+
+
     page_0 = ft.Row(
         [
             ft.Column(
                 [
-                    Container(height=200, business_name=bisnness_name, content=content_data).build(),
+                    Container(height=200, business_name=state["business_name"], content=content_data).build(),
                     containerBoxs,
-                    containerBoxs_airbnb
+                    containerBoxs_airbnb,
+                    btn_extraviado_manual
                     
                 ], width=350
             ),
             ft.Column(
-                [
-                     Container(business_name=bisnness_name, content=ft.Row(
-                         [
-                            registers_database
-                         ], expand=True
-                     )).build(),
-                ], expand=True
+    [
+                    Container(
+                        business_name=state["business_name"],
+                        content=ft.Row(
+                            [registers_database], expand=True
+                        ),
+                        height=None, expand=True
+                         
+                    ).build()
+                ],
+                expand=True,
+                scroll=ft.ScrollMode.AUTO,
+                alignment=ft.MainAxisAlignment.START,
             ),
 
-        ], expand=True
+        ], expand=True,vertical_alignment=ft.CrossAxisAlignment.START
     )
 
     ###########################################################################################################
@@ -394,12 +870,11 @@ def main(page: ft.Page):
 
     usb_selector = ft.Dropdown(
         label="Impresoras USB",
-        options=[ft.dropdown.Option(p) for p in get_usb_printers()],
         width=300, border_color=ft.Colors.WHITE,
     )
 
     config_container = Container(
-        business_name=bisnness_name,
+        business_name=state["business_name"],
         content=ft.Column(
             [
                 ft.Text("CONFIGURACIÓN DE IMPRESORA", size=26, weight=ft.FontWeight.BOLD),
@@ -431,21 +906,39 @@ def main(page: ft.Page):
 
     ###########################################################################################################
     # page 2
-    name_fee = TextField(label="Nombre de la tarifa", width=300).build()
-    price_fee = TextField(label="Precio por hora", keyboard_type=ft.KeyboardType.NUMBER, width=300).build()
+    name_fee_normal = TextField(label="Nombre tarifa normal", width=300).build()
+    price_fee_normal = TextField(label="Precio tarifa normal", keyboard_type=ft.KeyboardType.NUMBER, width=300).build()
+
+    name_fee_jueves = TextField(label="Nombre tarifa jueves", width=300).build()
+    price_fee_jueves = TextField(label="Precio tarifa jueves", keyboard_type=ft.KeyboardType.NUMBER, width=300).build()
+
+    name_fee_pension = TextField(label="Nombre tarifa pensión", width=300).build()
+    price_fee_pension = TextField(label="Precio tarifa pensión", keyboard_type=ft.KeyboardType.NUMBER, width=300).build()
+
+    name_fee_extraviado = TextField(label="Nombre tarifa extraviado", width=300).build()
+    price_fee_extraviado = TextField(label="Precio tarifa extraviado", keyboard_type=ft.KeyboardType.NUMBER, width=300).build()
 
 
     fee_container = Container(
-        business_name=bisnness_name,
+        business_name=state["business_name"],
         content=ft.Column(
             [
                 ft.Text("CONFIGURACIÓN DE TARIFA", size=26, weight=ft.FontWeight.BOLD),
-                ft.Column(
+                ft.Row(
                     [
-                        name_fee,
-                        price_fee,
-                    ]
+                        ft.Column([
+                    name_fee_normal,
+                    price_fee_normal,
+                ]),
+                ft.Column([
+                    name_fee_jueves,
+                    price_fee_jueves,
+                ]),
+                    ft.Column([name_fee_pension, price_fee_pension]),
+                    ft.Column([name_fee_extraviado, price_fee_extraviado]),
+                    ], expand=True, alignment=ft.MainAxisAlignment.CENTER
                 ),
+
                 ft.Row(
                     [
                         Button(text="GUARDAR",  icon=ft.Icons.SAVE, width=300, on_click=save_fee).build(),
@@ -482,9 +975,11 @@ def main(page: ft.Page):
     ############################################################################################################
     
     
-    page.appbar = AppBar(bisnness_name=bisnness_name, onChange=onChangePage).build()
+    page.appbar = AppBar(business_name=state["business_name"], onChange=onChangePage).build()
+    load_boxes_config()
     colorBoxs()
     colorBoxsAirBnb()
+    check_airbnb_pending()
     page.add(
         ft.SafeArea(
             ft.Column(
@@ -492,10 +987,16 @@ def main(page: ft.Page):
                     page_0,
                     page_1,
                     page_2,
-                    alert
+                    alert,
+                    alert_config_cajones,
+                    alert_password,
+                    alert_airbnb_pending,
+                    alert_clean_outs,
+                    alert_lost_ticket
                 ], expand=True
             ), expand=True
         )
     )
     read_qr.focus()
+    getBD()
 ft.app(main)

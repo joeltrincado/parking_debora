@@ -1,8 +1,8 @@
 import flet as ft
 
 class AppBar():
-    def __init__(self, bisnness_name=None, items = None, onChange = None, *args, **kwargs):
-        self.bisnness_name = bisnness_name
+    def __init__(self, business_name=None, items = None, onChange = None, *args, **kwargs):
+        self.business_name = business_name
         self.items = items
         self.onChange = onChange
 
@@ -25,9 +25,9 @@ class AppBar():
                 ]
             
         return ft.AppBar(
-        leading=ft.Icon(ft.Icons.ACCESS_TIME),
+        leading=ft.Icon(ft.Icons.CAR_RENTAL),
         leading_width=40,
-        title=ft.Text("Control " + self.bisnness_name if self.bisnness_name is not None else "Control", size=20, weight=ft.FontWeight.BOLD),
+        title=ft.Text("Control " + self.business_name if self.business_name is not None else "Control", size=20, weight=ft.FontWeight.BOLD),
         center_title=False,
         bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
         actions=[
