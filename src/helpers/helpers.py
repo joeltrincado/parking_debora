@@ -48,7 +48,6 @@ def getDataColumns(data=None):
 
 def print_ticket_usb(printer_name=None,data=None, error=None, err_printer=None, entrada=True):
     import win32print
-    print('Imprimiendo ticket...', printer_name)
     if entrada:
         zpl_code = f"""
             ^XA
@@ -85,7 +84,7 @@ def print_ticket_usb(printer_name=None,data=None, error=None, err_printer=None, 
             ^FT23,779^A0N,14,18^FH\^CI28^FDparticulares se arregla entre ellos mismos.^FS^CI27
             ^FT166,392^A0N,39,38^FH\^CI28^FD$ 30.00 MXN/ Hora^FS^CI27
             ^FO14,629^GB569,0,2^FS
-            {'^FT456,609^A0N,39,38^FH\^CI28^FDAIRBNB^FS^CI27' if data["tipo"] == "Boleto AirBnb" else None}
+            '^FT456,609^A0N,39,38^FH\^CI28^FD{data["tipo"]}^FS^CI27'
 
             ^XZ
             """

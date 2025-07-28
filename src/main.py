@@ -123,6 +123,7 @@ def main(page: ft.Page):
             state["nBoxesAirBnb"] = int(input_airbnb_boxes.value)
             set_config("cajones_normales", str(state["nBoxes"]))
             set_config("cajones_airbnb", str(state["nBoxesAirBnb"]))
+            update_boxes_view()
             alert_config_cajones.open = False
             page.open(ft.SnackBar(ft.Text("Configuración actualizada")))
         except ValueError:
@@ -270,7 +271,7 @@ def main(page: ft.Page):
             tiempo_texto = f" | Tiempo: {horas}h {minutos}min"
 
             # Si estuvo más de 10h, tarifa de pensión
-            if duracion.total_seconds() >= 36000:
+            if tiempo_total_segundos >= 36000:
                 _, precio_unitario = get_price_by_type("pension")
                 total = precio_unitario
                 price = precio_unitario
@@ -282,9 +283,21 @@ def main(page: ft.Page):
                     precio_unitario = float(precio_unitario)
                 except:
                     precio_unitario = 0.0
-                total = horas * precio_unitario
-                if minutos > 0:
-                    total += precio_unitario / 2 if minutos <= 30 else precio_unitario
+
+                # Se cobra la primera hora completa
+                total = precio_unitario
+
+                # Si pasó más de una hora, se calcula el resto por fracciones de 30 min
+                if horas >= 1:
+                    horas_restantes = horas - 1
+                    total += horas_restantes * precio_unitario
+
+                    if minutos > 0:
+                        if minutos <= 30:
+                            total += precio_unitario / 2
+                        else:
+                            total += precio_unitario
+
                 price = precio_unitario
 
         elif code[6] == "Boleto Pensión":
@@ -329,6 +342,7 @@ def main(page: ft.Page):
         getBD()
         message(f"Boleto de salida generado. Total: ${total:.2f}{tiempo_texto}")
         page.update()
+
 
 
     def delete_all(e):
@@ -471,11 +485,24 @@ def main(page: ft.Page):
             "fecha_salida": date_picker.value.strftime("%Y-%m-%d"),
             "precio": 0,
             "status": "Entrada"
+            }
+        
+        ticket_data = {
+            "placa": entry["codigo"],
+            "hora_entrada": entry["hora_entrada"],
+            "fecha_entrada": entry["fecha"],
+            "tipo": "Boleto AirBnb"
         }
+
+
+
+
 
         insert_entry(entry["codigo"], entry["hora_entrada"], entry["fecha"],
                     entry["hora_salida"], entry["fecha_salida"],
                     "Boleto AirBnb", entry["precio"], "Boleto AirBnb")
+        print_ticket_usb(printer_name=state["printer"], data=ticket_data)
+
 
         alert.open = False
         plateField.value = ""
@@ -594,6 +621,8 @@ def main(page: ft.Page):
                 else:
                     createOut(code)
         read_qr.value = ""
+        read_qr.focus()
+        page.update()
 
     def onChangePage(e):
         # Página pública
@@ -660,14 +689,7 @@ def main(page: ft.Page):
             message("Debes seleccionar fecha y hora de salida")
             return
 
-        addAirBnb(plate=placa)
-        data = {
-            "placa": placa,
-            "fecha_entrada": date_picker.value.strftime("%Y-%m-%d"),
-            "hora_entrada": time_picker.value.strftime("%H:%M"),
-            "tipo": "Boleto AirBnb"
-        }
-        print_ticket_usb(printer_name=state["printer"], data=data)
+        addAirBnb(plate=placa)        
         getBD()
         alert.open = False
         page.update()
