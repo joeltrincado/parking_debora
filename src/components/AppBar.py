@@ -1,10 +1,11 @@
 import flet as ft
 
 class AppBar():
-    def __init__(self, business_name=None, items = None, onChange = None, *args, **kwargs):
+    def __init__(self, business_name=None, items = None, onChange = None, filters = None, *args, **kwargs):
         self.business_name = business_name
         self.items = items
         self.onChange = onChange
+        self.filters = filters
 
     def build(self):
         i = []
@@ -29,8 +30,10 @@ class AppBar():
         leading_width=40,
         title=ft.Text("Control " + self.business_name if self.business_name is not None else "Control", size=20, weight=ft.FontWeight.BOLD),
         center_title=False,
+        toolbar_height=60,
         bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
         actions=[
+            ft.Row([self.filters ], expand=True, alignment=ft.MainAxisAlignment.END),
             ft.PopupMenuButton(
                 icon=ft.Icons.MENU,
                 items=i

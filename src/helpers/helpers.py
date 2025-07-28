@@ -3,7 +3,7 @@ from PIL import Image
 import io
 import base64
 import flet as ft
-import win32print
+
 
 def generate_qr_base64(data=None, box_size=10, border=4, fill_color="black", back_color="white"):
     if not data:
@@ -47,6 +47,7 @@ def getDataColumns(data=None):
 
 
 def print_ticket_usb(printer_name=None,data=None, error=None, err_printer=None, entrada=True):
+    import win32print
     if entrada:
         zpl_code = f"""
             ^XA

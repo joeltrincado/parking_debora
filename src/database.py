@@ -5,6 +5,7 @@ def create_connection():
     return sqlite3.connect("visitas.db")
 
 def init_db():
+    
     with create_connection() as conn:
         cursor = conn.cursor()
 
