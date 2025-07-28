@@ -79,3 +79,7 @@ flet build windows -v
 ```
 
 For more details on building Windows package, refer to the [Windows Packaging Guide](https://flet.dev/docs/publish/windows/).
+
+
+flet build windows    ------------------------- Crear app para windows
+flet pack "./src/main.py ---------------------- Ejecutable

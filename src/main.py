@@ -68,6 +68,21 @@ def main(page: ft.Page):
     
     # FUCTIONS
 
+    def update_boxes_view():
+        total_normales = state["nBoxes"]
+        total_airbnb = state["nBoxesAirBnb"]
+
+        actuales_normales = len([e for e in state["entries"] if e[6] == "Boleto normal" or e[6] == "Boleto Pensión" or e[6] == "Boleto Extraviado"])
+        actuales_airbnb = len([e for e in state["entries"] if e[6] == "Boleto AirBnb"])
+
+        disponibles_normales = max(total_normales - actuales_normales, 0)
+        disponibles_airbnb = max(total_airbnb - actuales_airbnb, 0)
+
+        boxs.value = str(disponibles_normales)
+        boxsText_airbnb.value = str(disponibles_airbnb)
+        page.update()
+
+
     def handle_menu_protected(target_index):
         def go():
             show_page(target_index, callback=load_config if target_index == 1 else load_prices if target_index == 2 else None)
@@ -229,7 +244,10 @@ def main(page: ft.Page):
         datacells = getDatacell(state["entries"])
         registers_database.rows.clear()
         registers_database.rows = datacells
+
+        update_boxes_view()  # <- AGREGAR ESTO
         page.update()
+
 
 
     def close_alert_airbnb_pending(e):
@@ -424,6 +442,7 @@ def main(page: ft.Page):
         delete_all_outs()
         alert_clean_outs.open = False
         page.open(ft.SnackBar(ft.Text("Se han borrado los registros de salidas.")))
+        page.update()
 
     def close_alert_cajones(e):
         alert_config_cajones.open = False
@@ -469,6 +488,7 @@ def main(page: ft.Page):
 
         page.update()
         getBD()
+        update_boxes_view()
 
 
 
@@ -539,7 +559,8 @@ def main(page: ft.Page):
             if not state["printer"]:
                 message("No hay impresora configurada. No se registró la entrada.")
                 return
-            alert.open = True
+            else:
+                alert.open = True
             page.update()
 
         elif valor == "extraviado":
@@ -568,7 +589,10 @@ def main(page: ft.Page):
             if code is None:
                 message()
             else:
-                createOut(code) if "Boleto" in code[6] else airBnbOut(code)
+                if code[6] == "Boleto AirBnb":
+                    airBnbOut(code)
+                else:
+                    createOut(code)
         read_qr.value = ""
 
     def onChangePage(e):
@@ -637,6 +661,14 @@ def main(page: ft.Page):
             return
 
         addAirBnb(plate=placa)
+        data = {
+            "placa": placa,
+            "fecha_entrada": date_picker.value.strftime("%Y-%m-%d"),
+            "hora_entrada": time_picker.value.strftime("%H:%M"),
+            "tipo": "Boleto AirBnb"
+        }
+        print_ticket_usb(printer_name=state["printer"], data=data)
+        getBD()
         alert.open = False
         page.update()
 
@@ -677,6 +709,7 @@ def main(page: ft.Page):
         fecha = datetime.now().strftime("%Y-%m-%d")
         insert_out(code[1], code[2], code[3], hora, fecha, "Boleto Extraviado", precio_unitario, precio_unitario)
         delete_entry(code[1])
+        update_boxes_view()
         message(f"Boleto extraviado cerrado. Total: ${precio_unitario:.2f}")
         alert_lost_ticket.open = False
         getBD()
@@ -1023,6 +1056,8 @@ def main(page: ft.Page):
                 pass
 
         load_boxes_config()
+        update_boxes_view()
+        getBD()
 
         # Cargar entradas y refrescar tabla
         state["entries"] = get_all_entries()

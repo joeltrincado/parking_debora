@@ -48,19 +48,15 @@ def getDataColumns(data=None):
 
 def print_ticket_usb(printer_name=None,data=None, error=None, err_printer=None, entrada=True):
     import win32print
+    print('Imprimiendo ticket...', printer_name)
     if entrada:
         zpl_code = f"""
             ^XA
-            ~TA000
             ~JSN
             ^LT0
-            ^MNW
-            ^MTT
-            ^PON
-            ^PMN
             ^LH0,0
             ^JMA
-            ^PR8,8
+            ^PR5,10
             ~SD15
             ^JUS
             ^LRN
@@ -77,7 +73,7 @@ def print_ticket_usb(printer_name=None,data=None, error=None, err_printer=None, 
             ^FT216,251^A0N,39,38^FH\^CI28^FD{data["fecha_entrada"]}^FS^CI27
             ^FT166,336^A0N,39,38^FH\^CI28^FDdesde: {data["hora_entrada"]}^FS^CI27
             ^FO43,310^GFA,145,464,16,:Z64:eJxjYIADDgZUwIPG50Pj86PzG9D4B4AE1yo4WP8AyJf/Xw+HH4B8+/8I8AMsjwB/0OT/ocn/R+c3oPEPoOr//4CAPLp+Avb/QeOjux/kPyYlONB/gCV88IUfgfBHjx9w/AEAt8bEKg==:CBE4
-            ^FT200,633^BQN,2,9
+            ^FT200,610^BQN,2,9
             ^FH\^FDLA,{data["placa"]}^FS
             ^FT23,653^A0N,14,18^FH\^CI28^FDLa entrega del automovil se hará solamente al portador del presente, ^FS^CI27
             ^FT23,671^A0N,14,18^FH\^CI28^FDen caso de perdida debe ser reportado de inmediato  y deberá^FS^CI27
@@ -98,13 +94,9 @@ def print_ticket_usb(printer_name=None,data=None, error=None, err_printer=None, 
         ^XA
         ~JSN
         ^LT0
-        ^MNW
-        ^MTT
-        ^PON
-        ^PMN
         ^LH0,0
         ^JMA
-        ^PR8,8
+        ^PR5,10
         ~SD15
         ^JUS
         ^LRN
@@ -128,7 +120,7 @@ def print_ticket_usb(printer_name=None,data=None, error=None, err_printer=None, 
         ^FT52,744^A0N,56,56^FH\^CI28^FDTOTAL: $ {data["total"]} MXN^FS^CI27
         ^FO43,350^GFA,145,464,16,:Z64:eJxjYIADDgZUwIPG50Pj86PzG9D4B4AE1yo4WP8AyJf/Xw+HH4B8+/8I8AMsjwB/0OT/ocn/R+c3oPEPoOr//4CAPLp+Avb/QeOjux/kPyYlONB/gCV88IUfgfBHjx9w/AEAt8bEKg==:CBE4
         ^FO67,396^GB472,66,2^FS
-        ^FT168,444^A0N,39,38^FH\^CI28^FDBOLETO NORMAL^FS^CI27
+        ^FT168,444^A0N,39,38^FH\^CI28^FD{data["tipo"]}^FS^CI27
 
         ^XZ
     """ 
@@ -145,5 +137,3 @@ def print_ticket_usb(printer_name=None,data=None, error=None, err_printer=None, 
             return error if error else print("Error al imprimir:", e)
     else:
         return err_printer if err_printer else print("No se ha seleccionado una impresora")
-
-
