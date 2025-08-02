@@ -4,6 +4,9 @@ from datetime import datetime
 import json
 import os
 import re
+# Variables globales para verificar si se seleccionó fecha y hora
+hora_seleccionada = False
+fecha_seleccionada = False
 
 # Módulos internos ligeros (funciones no costosas)
 from database import (
@@ -30,6 +33,8 @@ def main(page: ft.Page):
     
 
     # GLOBALS VARS
+    # Variables para saber si el usuario realmente seleccionó una fecha/hora
+
     state = {
         "current_tab": 0,
         "business_name": "Estacionamiento CECI",
@@ -45,7 +50,7 @@ def main(page: ft.Page):
     datacells = getDatacell(state["entries"])
     columns = getDataColumns(["FOLIO", "CÓDIGO", "FECHA", "HORA", "TIPO DE ENTRADA"])
     PASSWORD = "1234"  # Puedes cambiarla o hacerla configurable
-
+    
     impresora_config = get_config("impresora")
     if impresora_config:
         try:
@@ -257,8 +262,9 @@ def main(page: ft.Page):
 
     def createOut(code, price=0, total=0):
         out_date = datetime.now().strftime("%Y-%m-%d")
+        fecha_salida_formato = formatear_fecha(datetime.now().strftime("%Y-%m-%d"))
         out_time = datetime.now().strftime("%H:%M:%S")
-
+ 
         tiempo_texto = ""
         if code[6] == "Boleto normal":
             entrada = datetime.strptime(f"{code[3]} {code[2]}", "%Y-%m-%d %H:%M:%S")
@@ -332,7 +338,7 @@ def main(page: ft.Page):
                 "hora_entrada": code[2],
                 "fecha_entrada": code[3],
                 "hora_salida": out_time,
-                "fecha_salida": out_date,
+                "fecha_salida": fecha_salida_formato,
                 "total": f"{total:.2f}",
                 "tipo": code[6]
             }
@@ -469,14 +475,16 @@ def main(page: ft.Page):
     # ONCHANGES & ONSUBMITS
 
     def addAirBnb(plate=""):
+        global hora_seleccionada, fecha_seleccionada 
+
         import re
-        if not re.match(r"^[A-Z0-9]{6,7}$", plate):
+        if not re.match(r"^[A-Z0-9]{5,8}$", plate):
             message("Placa inválida")
             return
-        if not time_picker.value or not date_picker.value:
+        if  hora_seleccionada == False  or  fecha_seleccionada == False:
             message("Debes seleccionar fecha y hora de salida")
             return
-
+       
         entry = {
             "codigo": plate,
             "hora_entrada": datetime.now().strftime("%H:%M:%S"),
@@ -490,8 +498,10 @@ def main(page: ft.Page):
         ticket_data = {
             "placa": entry["codigo"],
             "hora_entrada": entry["hora_entrada"],
-            "fecha_entrada": entry["fecha"],
-            "tipo": "Boleto AirBnb"
+            "fecha_entrada": formatear_fecha(datetime.now().strftime("%Y-%m-%d")),
+            "tipo": "Boleto AirBnb",
+            "precio": "Precio Especial",
+            "titulo": "Boleto AirBnb"
         }
 
 
@@ -512,7 +522,8 @@ def main(page: ft.Page):
         textDate.visible = False
         rangeTime.visible = True
         rangeDate.visible = True
-
+        hora_seleccionada = False
+        fecha_seleccionada = False
         page.update()
         getBD()
         update_boxes_view()
@@ -532,12 +543,22 @@ def main(page: ft.Page):
         else:
             message("El boleto no puede salir hoy")
 
-
+    def formatear_fecha(fecha_iso):
+        meses = [
+            "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+            "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+        ]
+        fecha = datetime.strptime(fecha_iso, "%Y-%m-%d")
+        dia = fecha.day
+        mes = meses[fecha.month - 1]
+        año = fecha.year
+        return f"{dia} de {mes} del {año}"
     def onSubmitReadQr(e):
         valor = e.control.value.strip().lower()
         now = datetime.now()
         codigo = now.strftime("%Y%m%d%H%M%S")
         hora = now.strftime("%H:%M:%S")
+        fecha_entrada = formatear_fecha(now.strftime("%Y-%m-%d"))
         fecha = now.strftime("%Y-%m-%d")
 
         def imprimir_ticket_y_guardar(codigo, fecha, hora, tipo):
@@ -545,11 +566,26 @@ def main(page: ft.Page):
                 message("No hay impresora configurada. No se registró la entrada.")
                 return False
             try:
+                precio = 0.0
+
+                if tipo == "Boleto normal":
+                    es_jueves = datetime.now().weekday() == 3
+                    _, precio = get_price_by_day(es_jueves)
+                    costo = "MXN / Hora"
+                    titulo = "Boleto de Entrada"
+                elif tipo == "Boleto Pensión":
+                    _, precio = get_price_by_type("pension")
+                    costo = "MXN / DIA"
+                    titulo = "Boleto Pensión"
+
+                
                 data = {
                     "placa": codigo,
-                    "fecha_entrada": fecha,
+                    "fecha_entrada": fecha_entrada,
                     "hora_entrada": hora,
-                    "tipo": tipo
+                    "tipo": tipo,
+                    "precio": f"{float(precio):.2f} {costo}",
+                    "titulo": titulo
                 }
                 print_ticket_usb(printer_name=state["printer"], data=data)
 
@@ -598,7 +634,7 @@ def main(page: ft.Page):
                 return
             print_ticket_usb(
                 printer_name=state["printer"],
-                data={"placa": codigo, "fecha_entrada": fecha, "hora_entrada": hora, "tipo": "Boleto extraviado"}
+                data={"placa": codigo, "fecha_entrada": fecha_entrada, "hora_entrada": hora, "tipo": "Boleto extraviado","precio": f"{float(precio_unitario):.2f} MXN ", "titulo":"Boleto Extraviado"}
             )
             insert_entry(
                 codigo=codigo,
@@ -665,33 +701,39 @@ def main(page: ft.Page):
         page.update()
 
     def handle_change_date(e):
+        global fecha_seleccionada
         rangeDate.visible = False
         textDate.text = f'Fecha de salida: {str(date_picker.value)[:10]}'
         textDate.visible = True
+        fecha_seleccionada = True
         page.update()
     
     def handle_change_time(e):
+        global hora_seleccionada
         rangeTime.visible = False
         textTime.text = f'Hora de salida: {time_picker.value}'
         textTime.visible = True
+        hora_seleccionada = True
         page.update()
 
     def handle_accept_airbnb(e):
         import re
-        placa = plateField.value.strip()
+        
+        placa = plateField.value.strip().upper()
         if not placa:
             message("Debes ingresar la placa")
             return
         if not re.match(r"^[A-Z0-9]{5,8}$", placa):
             message("Placa inválida. Usa de 5 a 8 caracteres alfanuméricos")
             return
-        if not time_picker.value or not date_picker.value:
+        if  hora_seleccionada == False  or  fecha_seleccionada == False:
             message("Debes seleccionar fecha y hora de salida")
             return
-
+        
         addAirBnb(plate=placa)        
         getBD()
         alert.open = False
+        
         page.update()
 
 
