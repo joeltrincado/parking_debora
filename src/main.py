@@ -101,13 +101,14 @@ def main(page: ft.Page):
             if password_field.value == PASSWORD:
                 password_field.value = ""
                 alert_password.open = False
+                page.update()
                 on_success()
             else:
                 password_field.error_text = "Contraseña incorrecta"
-            page.update()
+                page.update()
 
         password_field = ft.TextField(label="Contraseña", password=True, width=300, on_submit=validate_password)
-        alert_password.title = ft.Text(title)  # <- CORRECTO
+        alert_password.title = ft.Text(title)
         alert_password.content = password_field
         alert_password.actions = [
             ft.TextButton("Cancelar", on_click=lambda e: close_password_alert()),
@@ -115,6 +116,7 @@ def main(page: ft.Page):
         ]
         alert_password.open = True
         page.update()
+
 
 
     def close_password_alert():
@@ -130,6 +132,7 @@ def main(page: ft.Page):
             set_config("cajones_airbnb", str(state["nBoxesAirBnb"]))
             update_boxes_view()
             alert_config_cajones.open = False
+            
             page.open(ft.SnackBar(ft.Text("Configuración actualizada")))
         except ValueError:
             page.open(ft.SnackBar(ft.Text("Valores inválidos")))
@@ -171,7 +174,18 @@ def main(page: ft.Page):
             duracion = salida - entrada
             duracion_min = int(duracion.total_seconds() // 60)
             duracion_hrs = round(duracion_min / 60, 2)
-            dia_semana = salida.strftime('%A')
+            dias_semana = {
+                "Monday": "Lunes",
+                "Tuesday": "Martes",
+                "Wednesday": "Miércoles",
+                "Thursday": "Jueves",
+                "Friday": "Viernes",
+                "Saturday": "Sábado",
+                "Sunday": "Domingo"
+            }
+
+            dia_semana_ingles = salida.strftime('%A')
+            dia_semana = dias_semana.get(dia_semana_ingles, dia_semana_ingles)
 
             if r[6] == "Boleto normal":
                 cobro = f"Normal ({duracion_min} min)"
@@ -283,8 +297,12 @@ def main(page: ft.Page):
                 price = precio_unitario
                 tiempo_texto += " | Tarifa tipo pensión aplicada"
             else:
-                es_jueves = datetime.now().weekday() == 3
-                _, precio_unitario = get_price_by_day(es_jueves)
+                now = datetime.now()
+                es_jueves = now.weekday() == 3
+                es_hora_valida = 15 <= now.hour < 22
+                aplicar_tarifa_especial = es_jueves and es_hora_valida
+
+                _, precio_unitario = get_price_by_day(aplicar_tarifa_especial)
                 try:
                     precio_unitario = float(precio_unitario)
                 except:
@@ -484,7 +502,12 @@ def main(page: ft.Page):
         if  hora_seleccionada == False  or  fecha_seleccionada == False:
             message("Debes seleccionar fecha y hora de salida")
             return
-       
+        entradas = get_all_entries()
+        for entrada in entradas:
+            if entrada[1] == plate and entrada[6] == "Boleto AirBnb":
+                message("Esta placa ya fue registrada como Boleto AirBnb")
+                return
+
         entry = {
             "codigo": plate,
             "hora_entrada": datetime.now().strftime("%H:%M:%S"),
@@ -501,7 +524,7 @@ def main(page: ft.Page):
             "fecha_entrada": formatear_fecha(datetime.now().strftime("%Y-%m-%d")),
             "tipo": "Boleto AirBnb",
             "precio": "Precio Especial",
-            "titulo": "Boleto AirBnb"
+            "titulo": "  Hospedaje"
         }
 
 
@@ -541,7 +564,8 @@ def main(page: ft.Page):
         if today >= entry_date:
             createOut(code)
         else:
-            message("El boleto no puede salir hoy")
+            codigo = code[1]
+            message(f"El boleto con placa {codigo} no puede salir hoy")
 
     def formatear_fecha(fecha_iso):
         meses = [
@@ -671,9 +695,8 @@ def main(page: ft.Page):
     ############################################################################################################
 
     # ONCLICKS
-
     def abrir_config_cajones():
-        show_password_alert("Acceso a configuración", lambda: open_cajones_config())
+        show_password_alert("Acceso a configuración", lambda: abrir_dialog_config())
 
     def download_report_secure(e):
         show_password_alert("Descargar reporte", lambda: download_report_csv(e))
@@ -681,12 +704,12 @@ def main(page: ft.Page):
     def delete_registers_secure(e):
         show_password_alert("Borrar registros", lambda: delete_registers(e))
 
-
-    def open_cajones_config():
+    def abrir_dialog_config():
         input_normal_boxes.value = str(state["nBoxes"])
         input_airbnb_boxes.value = str(state["nBoxesAirBnb"])
-        alert_config_cajones.open = True
+        page.open(alert_config_cajones)
         page.update()
+
 
     def delete_registers(e):
         alert_delete_registers.open = True
@@ -815,20 +838,23 @@ def main(page: ft.Page):
 
 
 
-    alert_config_cajones = Alert(
-        title="Editar número de cajones",
+    alert_config_cajones = ft.AlertDialog(
+        modal=True,
+        title=ft.Text("Editar número de cajones"),
+        content=ft.Container(
         content=ft.Column([
+            
             input_normal_boxes,
             input_airbnb_boxes
-        ]),
-        action="Guardar",
-        onAdd=guardar_cajones,
-        onCancel=close_alert_cajones,
-        cancel="Cancelar",
+        ], spacing=10),
         width=400,
-        height=150
-    ).build()
-    alert_config_cajones.open = False
+        height=150,
+        ),
+        actions=[
+            ft.TextButton("Cancelar", on_click=lambda e: close_alert_cajones(e)),
+            ft.TextButton("Guardar", on_click=lambda e: guardar_cajones(e)),
+        ],
+    )
 
     time_picker = ft.TimePicker(
         confirm_text="Confirmar",
@@ -865,7 +891,7 @@ def main(page: ft.Page):
         ft.dropdown.Option("Todos"),
         ft.dropdown.Option("Boleto normal"),
         ft.dropdown.Option("Boleto Pensión"),
-        ft.dropdown.Option("Boleto Extraviado"),
+        ft.dropdown.Option("Boleto extraviado"),
         ft.dropdown.Option("Boleto AirBnb")
     ],
     value="Todos",
@@ -1142,7 +1168,6 @@ def main(page: ft.Page):
                         page_1,
                         page_2,
                         alert,
-                        alert_config_cajones,
                         alert_password,
                         alert_airbnb_pending,
                         alert_clean_outs,
