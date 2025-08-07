@@ -49,7 +49,7 @@ def main(page: ft.Page):
     }
     datacells = getDatacell(state["entries"])
     columns = getDataColumns(["FOLIO", "CÓDIGO", "FECHA", "HORA", "TIPO DE ENTRADA"])
-    PASSWORD = "1234"  # Puedes cambiarla o hacerla configurable
+    PASSWORD = "H0608"  # Puedes cambiarla o hacerla configurable
     
     impresora_config = get_config("impresora")
     if impresora_config:
@@ -101,6 +101,7 @@ def main(page: ft.Page):
             if password_field.value == PASSWORD:
                 password_field.value = ""
                 alert_password.open = False
+                
                 page.update()
                 on_success()
             else:
