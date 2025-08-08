@@ -4,6 +4,9 @@ from datetime import datetime
 import json
 import os
 import re
+# Variables globales para verificar si se seleccionó fecha y hora
+hora_seleccionada = False
+fecha_seleccionada = False
 
 # Módulos internos ligeros (funciones no costosas)
 from database import (
@@ -30,6 +33,8 @@ def main(page: ft.Page):
     
 
     # GLOBALS VARS
+    # Variables para saber si el usuario realmente seleccionó una fecha/hora
+
     state = {
         "current_tab": 0,
         "business_name": "Estacionamiento CECI",
@@ -44,8 +49,8 @@ def main(page: ft.Page):
     }
     datacells = getDatacell(state["entries"])
     columns = getDataColumns(["FOLIO", "CÓDIGO", "FECHA", "HORA", "TIPO DE ENTRADA"])
-    PASSWORD = "1234"  # Puedes cambiarla o hacerla configurable
-
+    PASSWORD = "H0608"  # Puedes cambiarla o hacerla configurable
+    
     impresora_config = get_config("impresora")
     if impresora_config:
         try:
@@ -96,13 +101,15 @@ def main(page: ft.Page):
             if password_field.value == PASSWORD:
                 password_field.value = ""
                 alert_password.open = False
+                
+                page.update()
                 on_success()
             else:
                 password_field.error_text = "Contraseña incorrecta"
-            page.update()
+                page.update()
 
         password_field = ft.TextField(label="Contraseña", password=True, width=300, on_submit=validate_password)
-        alert_password.title = ft.Text(title)  # <- CORRECTO
+        alert_password.title = ft.Text(title)
         alert_password.content = password_field
         alert_password.actions = [
             ft.TextButton("Cancelar", on_click=lambda e: close_password_alert()),
@@ -110,6 +117,7 @@ def main(page: ft.Page):
         ]
         alert_password.open = True
         page.update()
+
 
 
     def close_password_alert():
@@ -125,6 +133,7 @@ def main(page: ft.Page):
             set_config("cajones_airbnb", str(state["nBoxesAirBnb"]))
             update_boxes_view()
             alert_config_cajones.open = False
+            
             page.open(ft.SnackBar(ft.Text("Configuración actualizada")))
         except ValueError:
             page.open(ft.SnackBar(ft.Text("Valores inválidos")))
@@ -166,7 +175,18 @@ def main(page: ft.Page):
             duracion = salida - entrada
             duracion_min = int(duracion.total_seconds() // 60)
             duracion_hrs = round(duracion_min / 60, 2)
-            dia_semana = salida.strftime('%A')
+            dias_semana = {
+                "Monday": "Lunes",
+                "Tuesday": "Martes",
+                "Wednesday": "Miércoles",
+                "Thursday": "Jueves",
+                "Friday": "Viernes",
+                "Saturday": "Sábado",
+                "Sunday": "Domingo"
+            }
+
+            dia_semana_ingles = salida.strftime('%A')
+            dia_semana = dias_semana.get(dia_semana_ingles, dia_semana_ingles)
 
             if r[6] == "Boleto normal":
                 cobro = f"Normal ({duracion_min} min)"
@@ -257,8 +277,9 @@ def main(page: ft.Page):
 
     def createOut(code, price=0, total=0):
         out_date = datetime.now().strftime("%Y-%m-%d")
+        fecha_salida_formato = formatear_fecha(datetime.now().strftime("%Y-%m-%d"))
         out_time = datetime.now().strftime("%H:%M:%S")
-
+ 
         tiempo_texto = ""
         if code[6] == "Boleto normal":
             entrada = datetime.strptime(f"{code[3]} {code[2]}", "%Y-%m-%d %H:%M:%S")
@@ -277,8 +298,12 @@ def main(page: ft.Page):
                 price = precio_unitario
                 tiempo_texto += " | Tarifa tipo pensión aplicada"
             else:
-                es_jueves = datetime.now().weekday() == 3
-                _, precio_unitario = get_price_by_day(es_jueves)
+                now = datetime.now()
+                es_jueves = now.weekday() == 3
+                es_hora_valida = 15 <= now.hour < 22
+                aplicar_tarifa_especial = es_jueves and es_hora_valida
+
+                _, precio_unitario = get_price_by_day(aplicar_tarifa_especial)
                 try:
                     precio_unitario = float(precio_unitario)
                 except:
@@ -332,7 +357,7 @@ def main(page: ft.Page):
                 "hora_entrada": code[2],
                 "fecha_entrada": code[3],
                 "hora_salida": out_time,
-                "fecha_salida": out_date,
+                "fecha_salida": fecha_salida_formato,
                 "total": f"{total:.2f}",
                 "tipo": code[6]
             }
@@ -469,13 +494,20 @@ def main(page: ft.Page):
     # ONCHANGES & ONSUBMITS
 
     def addAirBnb(plate=""):
+        global hora_seleccionada, fecha_seleccionada 
+
         import re
-        if not re.match(r"^[A-Z0-9]{6,7}$", plate):
+        if not re.match(r"^[A-Z0-9]{5,8}$", plate):
             message("Placa inválida")
             return
-        if not time_picker.value or not date_picker.value:
+        if  hora_seleccionada == False  or  fecha_seleccionada == False:
             message("Debes seleccionar fecha y hora de salida")
             return
+        entradas = get_all_entries()
+        for entrada in entradas:
+            if entrada[1] == plate and entrada[6] == "Boleto AirBnb":
+                message("Esta placa ya fue registrada como Boleto AirBnb")
+                return
 
         entry = {
             "codigo": plate,
@@ -490,8 +522,10 @@ def main(page: ft.Page):
         ticket_data = {
             "placa": entry["codigo"],
             "hora_entrada": entry["hora_entrada"],
-            "fecha_entrada": entry["fecha"],
-            "tipo": "Boleto AirBnb"
+            "fecha_entrada": formatear_fecha(datetime.now().strftime("%Y-%m-%d")),
+            "tipo": "Boleto AirBnb",
+            "precio": "Precio Especial",
+            "titulo": "  Hospedaje"
         }
 
 
@@ -512,7 +546,8 @@ def main(page: ft.Page):
         textDate.visible = False
         rangeTime.visible = True
         rangeDate.visible = True
-
+        hora_seleccionada = False
+        fecha_seleccionada = False
         page.update()
         getBD()
         update_boxes_view()
@@ -530,14 +565,25 @@ def main(page: ft.Page):
         if today >= entry_date:
             createOut(code)
         else:
-            message("El boleto no puede salir hoy")
+            codigo = code[1]
+            message(f"El boleto con placa {codigo} no puede salir hoy")
 
-
+    def formatear_fecha(fecha_iso):
+        meses = [
+            "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+            "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+        ]
+        fecha = datetime.strptime(fecha_iso, "%Y-%m-%d")
+        dia = fecha.day
+        mes = meses[fecha.month - 1]
+        año = fecha.year
+        return f"{dia} de {mes} del {año}"
     def onSubmitReadQr(e):
         valor = e.control.value.strip().lower()
         now = datetime.now()
         codigo = now.strftime("%Y%m%d%H%M%S")
         hora = now.strftime("%H:%M:%S")
+        fecha_entrada = formatear_fecha(now.strftime("%Y-%m-%d"))
         fecha = now.strftime("%Y-%m-%d")
 
         def imprimir_ticket_y_guardar(codigo, fecha, hora, tipo):
@@ -545,11 +591,26 @@ def main(page: ft.Page):
                 message("No hay impresora configurada. No se registró la entrada.")
                 return False
             try:
+                precio = 0.0
+
+                if tipo == "Boleto normal":
+                    es_jueves = datetime.now().weekday() == 3
+                    _, precio = get_price_by_day(es_jueves)
+                    costo = "MXN / Hora"
+                    titulo = "Boleto de Entrada"
+                elif tipo == "Boleto Pensión":
+                    _, precio = get_price_by_type("pension")
+                    costo = "MXN / DIA"
+                    titulo = "Boleto Pensión"
+
+                
                 data = {
                     "placa": codigo,
-                    "fecha_entrada": fecha,
+                    "fecha_entrada": fecha_entrada,
                     "hora_entrada": hora,
-                    "tipo": tipo
+                    "tipo": tipo,
+                    "precio": f"{float(precio):.2f} {costo}",
+                    "titulo": titulo
                 }
                 print_ticket_usb(printer_name=state["printer"], data=data)
 
@@ -598,7 +659,7 @@ def main(page: ft.Page):
                 return
             print_ticket_usb(
                 printer_name=state["printer"],
-                data={"placa": codigo, "fecha_entrada": fecha, "hora_entrada": hora, "tipo": "Boleto extraviado"}
+                data={"placa": codigo, "fecha_entrada": fecha_entrada, "hora_entrada": hora, "tipo": "Boleto extraviado","precio": f"{float(precio_unitario):.2f} MXN ", "titulo":"Boleto Extraviado"}
             )
             insert_entry(
                 codigo=codigo,
@@ -635,9 +696,8 @@ def main(page: ft.Page):
     ############################################################################################################
 
     # ONCLICKS
-
     def abrir_config_cajones():
-        show_password_alert("Acceso a configuración", lambda: open_cajones_config())
+        show_password_alert("Acceso a configuración", lambda: abrir_dialog_config())
 
     def download_report_secure(e):
         show_password_alert("Descargar reporte", lambda: download_report_csv(e))
@@ -645,12 +705,12 @@ def main(page: ft.Page):
     def delete_registers_secure(e):
         show_password_alert("Borrar registros", lambda: delete_registers(e))
 
-
-    def open_cajones_config():
+    def abrir_dialog_config():
         input_normal_boxes.value = str(state["nBoxes"])
         input_airbnb_boxes.value = str(state["nBoxesAirBnb"])
-        alert_config_cajones.open = True
+        page.open(alert_config_cajones)
         page.update()
+
 
     def delete_registers(e):
         alert_delete_registers.open = True
@@ -665,33 +725,39 @@ def main(page: ft.Page):
         page.update()
 
     def handle_change_date(e):
+        global fecha_seleccionada
         rangeDate.visible = False
         textDate.text = f'Fecha de salida: {str(date_picker.value)[:10]}'
         textDate.visible = True
+        fecha_seleccionada = True
         page.update()
     
     def handle_change_time(e):
+        global hora_seleccionada
         rangeTime.visible = False
         textTime.text = f'Hora de salida: {time_picker.value}'
         textTime.visible = True
+        hora_seleccionada = True
         page.update()
 
     def handle_accept_airbnb(e):
         import re
-        placa = plateField.value.strip()
+        
+        placa = plateField.value.strip().upper()
         if not placa:
             message("Debes ingresar la placa")
             return
         if not re.match(r"^[A-Z0-9]{5,8}$", placa):
             message("Placa inválida. Usa de 5 a 8 caracteres alfanuméricos")
             return
-        if not time_picker.value or not date_picker.value:
+        if  hora_seleccionada == False  or  fecha_seleccionada == False:
             message("Debes seleccionar fecha y hora de salida")
             return
-
+        
         addAirBnb(plate=placa)        
         getBD()
         alert.open = False
+        
         page.update()
 
 
@@ -773,20 +839,23 @@ def main(page: ft.Page):
 
 
 
-    alert_config_cajones = Alert(
-        title="Editar número de cajones",
+    alert_config_cajones = ft.AlertDialog(
+        modal=True,
+        title=ft.Text("Editar número de cajones"),
+        content=ft.Container(
         content=ft.Column([
+            
             input_normal_boxes,
             input_airbnb_boxes
-        ]),
-        action="Guardar",
-        onAdd=guardar_cajones,
-        onCancel=close_alert_cajones,
-        cancel="Cancelar",
+        ], spacing=10),
         width=400,
-        height=150
-    ).build()
-    alert_config_cajones.open = False
+        height=150,
+        ),
+        actions=[
+            ft.TextButton("Cancelar", on_click=lambda e: close_alert_cajones(e)),
+            ft.TextButton("Guardar", on_click=lambda e: guardar_cajones(e)),
+        ],
+    )
 
     time_picker = ft.TimePicker(
         confirm_text="Confirmar",
@@ -823,7 +892,7 @@ def main(page: ft.Page):
         ft.dropdown.Option("Todos"),
         ft.dropdown.Option("Boleto normal"),
         ft.dropdown.Option("Boleto Pensión"),
-        ft.dropdown.Option("Boleto Extraviado"),
+        ft.dropdown.Option("Boleto extraviado"),
         ft.dropdown.Option("Boleto AirBnb")
     ],
     value="Todos",
@@ -1100,7 +1169,6 @@ def main(page: ft.Page):
                         page_1,
                         page_2,
                         alert,
-                        alert_config_cajones,
                         alert_password,
                         alert_airbnb_pending,
                         alert_clean_outs,
