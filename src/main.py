@@ -2,8 +2,6 @@
 import flet as ft
 from datetime import datetime
 import json
-import os
-import re
 # Variables globales para verificar si se seleccionó fecha y hora
 hora_seleccionada = False
 fecha_seleccionada = False
@@ -258,6 +256,8 @@ def main(page: ft.Page):
 
     def getBD(filtro="Todos"):
         entradas = get_all_entries()
+        if filtro == "Boleto Hospedaje":
+            filtro = "Boleto AirBnb"
         if filtro != "Todos":
             entradas = [e for e in entradas if e[6] == filtro]
 
@@ -893,7 +893,7 @@ def main(page: ft.Page):
         ft.dropdown.Option("Boleto normal"),
         ft.dropdown.Option("Boleto Pensión"),
         ft.dropdown.Option("Boleto extraviado"),
-        ft.dropdown.Option("Boleto AirBnb")
+        ft.dropdown.Option("Boleto Hospedaje")
     ],
     value="Todos",
     on_change=lambda e: getBD(filtro=e.control.value), border_color=ft.Colors.WHITE
@@ -932,7 +932,7 @@ def main(page: ft.Page):
     boxs_airbnb = ft.Column(
         [
             ft.Row([
-                ft.Text("CAJONES DISPONIBLES AIRBNB", size=16, weight=ft.FontWeight.BOLD, expand=True),
+                ft.Text("CAJONES DISPONIBLE HOSPEDAJE", size=16, weight=ft.FontWeight.BOLD, expand=True),
                 ft.IconButton(icon=ft.Icons.SETTINGS, icon_color=ft.Colors.GREY_500, tooltip="Editar cajones", on_click=lambda e: abrir_config_cajones())
             ]),
             ft.Row([
@@ -1113,7 +1113,7 @@ def main(page: ft.Page):
 
      ############################################################################################################
     # ALERTS
-    alert = Alert(content=contentAlert, action="Aceptar", onCancel=close_alert, title="Boleto AirBnb", height=200, width=500, onAdd=handle_accept_airbnb).build()
+    alert = Alert(content=contentAlert, action="Aceptar", onCancel=close_alert, title="Boleto Hospedaje", height=200, width=500, onAdd=handle_accept_airbnb).build()
     alert.open = False
     
     ############################################################################################################
