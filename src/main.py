@@ -75,7 +75,7 @@ def main(page: ft.Page):
         total_normales = state["nBoxes"]
         total_hosp = state["nBoxesHospedaje"]
 
-        actuales_normales = len([e for e in state["entries"] if e[6] in ("Boleto normal","Boleto Pensión","Boleto Extraviado")])
+        actuales_normales = len([e for e in state["entries"] if e[6] in ("Boleto normal","Boleto Pensión")])
         actuales_hosp = len([e for e in state["entries"] if e[6] == "Boleto Hospedaje"])
 
         disponibles_normales = max(total_normales - actuales_normales, 0)
@@ -379,10 +379,12 @@ def main(page: ft.Page):
         page.update()
 
     def open_currency_dialog(payload):
-        # payload: {code, price_mxn, total_mxn, salida_data, tiempo_texto}
         state["pending_checkout"] = payload
 
         mxn_total = float(payload["total_mxn"] or 0.0)
+        price_mxn = float(payload.get("price_mxn", 0.0))
+        title_override = payload.get("title")
+        show_dual = bool(payload.get("show_dual", False))
 
         # Lee TC (MXN por 1 USD)
         try:
@@ -392,6 +394,7 @@ def main(page: ft.Page):
             tc = 0.0
 
         usd_total = (mxn_total / tc) if tc > 0 else None
+        price_usd = (price_mxn / tc) if tc > 0 else None
 
         # ---- UI controls ----
         currency_group = ft.RadioGroup(
@@ -404,10 +407,15 @@ def main(page: ft.Page):
             )
         )
 
+        # Textos
         tc_text = ft.Text(
             f"TC: {tc:.4f} MXN por 1 USD" if tc > 0 else "TC no configurado (habilita USD guardando un TC > 0)"
         )
-        total_text = ft.Text("")
+        total_text = ft.Text("")      
+        change_text = ft.Text("")
+        dual_text = ft.Text("")            
+        unit_text = ft.Text("")          
+
         amount_field = ft.TextField(
             label="Monto entregado",
             keyboard_type=ft.KeyboardType.NUMBER,
@@ -416,11 +424,10 @@ def main(page: ft.Page):
             autofocus=True,
             width=250,
         )
-        change_text = ft.Text("")
 
         btn_cancel = ft.TextButton("Cancelar", on_click=lambda e: close_currency_dialog())
         btn_ok = ft.FilledButton("Cobrar e imprimir", on_click=lambda e: on_confirm())
-        btn_ok.disabled = True  # se habilita cuando alcance el total
+        btn_ok.disabled = True
 
         # ---- helpers internos ----
         def _current_total_and_currency():
@@ -439,22 +446,27 @@ def main(page: ft.Page):
             total, curr = _current_total_and_currency()
             total_text.value = f"Total a pagar: ${total:.2f} {curr}"
 
+            # Monto y cambio
             pay = parse_amount()
             change = pay - total
 
             if curr == "USD" and tc > 0:
-                # Calcula cambio equivalente en MXN con base en MXN_TOTAL:
-                # pago_mxn = pay*tc; cambio_mxn = pago_mxn - mxn_total
                 pay_mxn = pay * tc
                 change_mxn = pay_mxn - mxn_total
-                if pay >= 0:
-                    change_text.value = f"Cambio: ${change:.2f} USD (≈ ${change_mxn:.2f} MXN)"
-                else:
-                    change_text.value = f"Cambio: -- USD (≈ -- MXN)"
+                change_text.value = f"Cambio: ${change:.2f} USD (≈ ${change_mxn:.2f} MXN)" if pay >= 0 else f"Cambio: -- USD (≈ -- MXN)"
             else:
                 change_text.value = f"Cambio: ${change:.2f} {curr}" if pay >= 0 else f"Cambio: -- {curr}"
 
-            # Habilita si el monto alcanza el total
+            # Mostrar ambos totales y precio unitario si aplica
+            if show_dual:
+                if tc > 0:
+                    dual_text.value = f"Total: ${mxn_total:.2f} MXN  (≈ ${mxn_total/tc:.2f} USD)"
+                    unit_text.value = f"Tarifa: ${price_mxn:.2f} MXN  (≈ ${price_usd:.2f} USD)"
+                else:
+                    dual_text.value = f"Total: ${mxn_total:.2f} MXN"
+                    unit_text.value = f"Tarifa: ${price_mxn:.2f} MXN"
+
+            # Habilitar botón si alcanza
             btn_ok.disabled = pay < total
             page.update()
 
@@ -463,12 +475,10 @@ def main(page: ft.Page):
             pay = parse_amount()
             change = max(pay - total, 0.0)
 
-            # Anexa info al ticket (impresión). La BD se guarda en MXN en handle_currency_select.
             salida_data = payload["salida_data"]
             salida_data["paga"] = f"{pay:.2f} {curr}"
             salida_data["cambio"] = f"{change:.2f} {curr}"
 
-            # Si fue en USD, también manda equivalentes en MXN para el ticket
             if curr == "USD" and tc > 0:
                 paga_mxn = pay * tc
                 cambio_mxn = max(paga_mxn - mxn_total, 0.0)
@@ -477,22 +487,27 @@ def main(page: ft.Page):
 
             handle_currency_select(curr)
 
-        # Recalcular al cambiar moneda
         currency_group.on_change = lambda e: update_totals()
 
-        # Armar diálogo
-        currency_alert.title = ft.Text("Selecciona la moneda y captura el pago")
+        # Armar diálogo (con título custom si viene)
+        currency_alert.title = ft.Text(title_override or "Selecciona la moneda y captura el pago")
+        content_children = [currency_group, tc_text, total_text]
+        if show_dual:
+            content_children.extend([dual_text, unit_text])
+        content_children.extend([amount_field, change_text])
+
         currency_alert.content = ft.Column(
-            [currency_group, tc_text, total_text, amount_field, change_text],
+            content_children,
             spacing=8,
             tight=True,
-            width=360
+            width=380
         )
         currency_alert.actions = [btn_cancel, btn_ok]
         currency_alert.open = True
 
         update_totals()
         page.update()
+
 
 
 
@@ -508,63 +523,116 @@ def main(page: ft.Page):
             return
 
         code = data["code"]
-        price_mxn = data["price_mxn"]
-        total_mxn = data["total_mxn"]
+        price_mxn = float(data["price_mxn"] or 0.0)
+        total_mxn = float(data["total_mxn"] or 0.0)
         salida_data = data["salida_data"]
-        tiempo_texto = data["tiempo_texto"]
+        tiempo_texto = data.get("tiempo_texto", "")
 
-        # Preparar impresión según moneda seleccionada (DB siempre en MXN)
+        # Preparar strings de impresión
         total_str = f"{total_mxn:.2f} MXN"
         precio_unit_str = f"{price_mxn:.2f} MXN"
 
-        if moneda == "USD":
-            _, tc = get_price_by_type("dolar")  # tc = pesos por 1 USD
-            try:
-                tc = float(tc)
-            except:
-                tc = 0.0
+        try:
+            _, tc_raw = get_price_by_type("dolar")
+            tc = float(tc_raw or 0.0)
+        except:
+            tc = 0.0
 
-            if tc <= 0:
-                page.open(ft.SnackBar(ft.Text("Tipo de cambio inválido. Se cobrará en MXN.")))
-            else:
-                total_usd = total_mxn / tc
-                price_usd = price_mxn / tc if price_mxn else 0.0
-                total_str = f"{total_usd:.2f} USD"
-                precio_unit_str = f"{price_usd:.2f} USD"
-                # opcional: anotar TC en el ticket
-                salida_data["tc"] = f"TC: {tc:.4f}"
+        if moneda == "USD" and tc > 0:
+            total_str = f"{(total_mxn / tc):.2f} USD"
+            precio_unit_str = f"{(price_mxn / tc):.2f} USD"
+            salida_data["tc"] = f"TC: {tc:.4f}"
 
-        # Actualizar datos del ticket para impresión
         salida_data["total"] = total_str
         salida_data["precio_unitario"] = precio_unit_str
-        salida_data["moneda"] = "USD" if moneda == "USD" else "MXN"
+        salida_data["moneda"] = "USD" if (moneda == "USD" and tc > 0) else "MXN"
 
-        # 1) Registrar salida en DB en MXN
+        # === Rama especial: Boleto Extraviado sin entrada previa ===
+        if data.get("mode") == "extraviado":
+            hora_ent_iso = data["entrada_hora_iso"]
+            fecha_ent_iso = data["entrada_fecha_iso"]
+            hora_sal_iso = data["salida_hora_iso"]
+            fecha_sal_iso = data["salida_fecha_iso"]
+            placa = code.get("placa")
+
+            # Guardar salida en BD (siempre valores MXN)
+            insert_out(
+                placa,
+                hora_ent_iso, fecha_ent_iso,
+                hora_sal_iso, fecha_sal_iso,
+                "Boleto Extraviado",
+                price_mxn, total_mxn
+            )
+            set_config(f"moneda:{placa}:{hora_sal_iso}:{fecha_sal_iso}", salida_data["moneda"])
+
+            # Imprimir ticket de salida (opcional)
+            if state["printer"]:
+                print_ticket_usb(printer_name=state["printer"], data=salida_data, entrada=False)
+
+            # Refrescar UI
+            getBD()
+            message(f"Pago por extravío registrado. Total mostrado: {salida_data['total']}")
+            close_currency_dialog()
+            return
+        # === Fin rama extraviado ===
+
+        # ---- Flujo normal (hay entrada en BD) ----
         insert_out(code[1], code[2], code[3], salida_data["hora_salida"], datetime.now().strftime("%Y-%m-%d"),
                 code[6], price_mxn, total_mxn)
-        
-        fecha_salida_iso = datetime.now().strftime("%Y-%m-%d")
-        set_config(
-            f"moneda:{code[1]}:{salida_data['hora_salida']}:{fecha_salida_iso}",
-            salida_data["moneda"]
-        )
 
-        # 2) Borrar entrada
+        fecha_salida_iso = datetime.now().strftime("%Y-%m-%d")
+        set_config(f"moneda:{code[1]}:{salida_data['hora_salida']}:{fecha_salida_iso}", salida_data["moneda"])
+
         delete_entry(code[1])
 
-        # 3) Imprimir ticket de salida
         if state["printer"]:
             print_ticket_usb(printer_name=state["printer"], data=salida_data, entrada=False)
 
-        # 4) Refrescar UI
         getBD()
         message(f"Boleto de salida generado. Total mostrado: {salida_data['total']}{tiempo_texto}")
-
         close_currency_dialog()
 
 
-    def createOut(code, price=0, total=0):
-        out_date = datetime.now().strftime("%Y-%m-%d")
+    def start_extraviado_flow(codigo: str):
+       
+        _, precio_unitario = get_price_by_type("extraviado")
+        price_mxn = float(precio_unitario or 0.0)
+
+        # Tiempos (sin entrada real: usamos la misma hora/fecha)
+        now = datetime.now()
+        hora_iso = now.strftime("%H:%M:%S")
+        fecha_iso = now.strftime("%Y-%m-%d")
+
+        # Datos para ticket (fecha con formato bonito)
+        salida_data = {
+            "placa": codigo,
+            "hora_entrada": hora_iso,                      # entrada “virtual”
+            "fecha_entrada": formatear_fecha(fecha_iso),   # solo para mostrar
+            "hora_salida": hora_iso,
+            "fecha_salida": formatear_fecha(fecha_iso),
+            "tipo": "Boleto Extraviado",
+            "total": "",
+        }
+
+        # Reusar el mismo diálogo de cobro que usas para normales/pensión
+        # con banderas para mostrar ambos precios (MXN y USD) en la UI.
+        open_currency_dialog({
+            "mode": "extraviado",          # <- para que handle_currency_select sepa que no hay entrada real
+            "code": {"placa": codigo},     # dummy
+            "price_mxn": price_mxn,
+            "total_mxn": price_mxn,
+            "salida_data": salida_data,
+            "tiempo_texto": " | Tarifa Extraviado aplicada",
+            "title": "Cobro boleto extraviado",
+            "show_dual": True,             # <- mostrar MXN y USD al mismo tiempo en el alert
+            "entrada_hora_iso": hora_iso,
+            "entrada_fecha_iso": fecha_iso,
+            "salida_hora_iso": hora_iso,
+            "salida_fecha_iso": fecha_iso,
+        })
+
+
+    def createOut(code):
         fecha_salida_formato = formatear_fecha(datetime.now().strftime("%Y-%m-%d"))
         out_time = datetime.now().strftime("%H:%M:%S")
 
@@ -944,25 +1012,7 @@ def main(page: ft.Page):
             page.update()
 
         elif valor == "extraviado":
-            _, precio_unitario = get_price_by_type("extraviado")
-            message(f"Boleto extraviado. Tarifa aplicada: ${precio_unitario:.2f}")
-            if not state["printer"]:
-                message("No hay impresora configurada. No se imprimió el ticket.")
-                return
-            print_ticket_usb(
-                printer_name=state["printer"],
-                data={"placa": codigo, "fecha_entrada": fecha_entrada, "hora_entrada": hora, "tipo": "Boleto extraviado","precio": f"{float(precio_unitario):.2f} MXN ", "titulo":"Boleto Extraviado"}
-            )
-            insert_entry(
-                codigo=codigo,
-                hora_entrada=hora,
-                fecha_entrada=fecha,
-                hora_salida=None,
-                fecha_salida=None,
-                type_entry="Boleto Extraviado",
-                precio=precio_unitario,
-                status="Entrada"
-            )
+            start_extraviado_flow(codigo)
 
         else:
             code = get_entry_by_code(e.control.value)
@@ -1092,28 +1142,21 @@ def main(page: ft.Page):
         alert_lost_ticket.open = True
         page.update()
     def confirm_lost_ticket_exit(code):
-        # Doble verificación de que NO sea un boleto de hospedaje
-        if (code[6] or "").strip().lower() == "boleto hospedaje":
+    # Bloquear hospedaje por seguridad
+        if es_hospedaje(code[6]):
             message("Los boletos de hospedaje no pueden salir por extravío. Solo en la fecha de salida o después.")
             alert_lost_ticket.open = False
             page.update()
             return
 
-        _, precio_unitario = get_price_by_type("extraviado")
-        hora = datetime.now().strftime("%H:%M:%S")
-        fecha = datetime.now().strftime("%Y-%m-%d")
-
-        insert_out(code[1], code[2], code[3], hora, fecha, "Boleto Extraviado", precio_unitario, precio_unitario)
-        set_config(
-            f"moneda:{code[1]}:{hora}:{fecha}",
-            "MXN"
-        )
+        # SOLO borrar la entrada (nada de insert_out ni impresión)
         delete_entry(code[1])
         update_boxes_view()
-        message(f"Boleto extraviado cerrado. Total: ${precio_unitario:.2f}")
         alert_lost_ticket.open = False
         getBD()
+        page.open(ft.SnackBar(ft.Text("Salida por extravío completada (sin ticket ni registro en salidas).")))
         page.update()
+
 
 
     def close_alert_lost():
@@ -1219,7 +1262,6 @@ def main(page: ft.Page):
         ft.dropdown.Option("Todos"),
         ft.dropdown.Option("Boleto normal"),
         ft.dropdown.Option("Boleto Pensión"),
-        ft.dropdown.Option("Boleto Extraviado"),
         ft.dropdown.Option("Boleto Hospedaje")
     ],
     value="Todos",

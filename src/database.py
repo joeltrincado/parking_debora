@@ -9,7 +9,7 @@ def init_db():
     with create_connection() as conn:
         cursor = conn.cursor()
 
-        # Tabla de entradas
+        # Tablas
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS entradas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -23,12 +23,9 @@ def init_db():
                 status TEXT NOT NULL
             )
         """)
-
-        # Índices
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_codigo_entrada ON entradas(codigo)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_type_entry ON entradas(type_entry)")
 
-        # Tabla de salidas
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS salidas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,7 +40,6 @@ def init_db():
             )
         """)
 
-        # Tabla de configuraciones
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS configuraciones (
                 clave TEXT PRIMARY KEY,
@@ -51,25 +47,36 @@ def init_db():
             )
         """)
 
-        # Tabla de precios
         cursor.execute("""
-        CREATE TABLE IF NOT EXISTS prices (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nombre TEXT NOT NULL,
-            precio REAL NOT NULL,
-            tipo TEXT NOT NULL
-        )
-    """)
-        
-    cursor.execute("SELECT 1 FROM prices WHERE tipo='dolar' LIMIT 1")
-    if cursor.fetchone() is None:
-        cursor.execute("""
-            INSERT INTO prices (id, nombre, precio, tipo)
-            VALUES (5, 'dolar', 20.0, 'dolar')
-            ON CONFLICT(id) DO UPDATE SET nombre='dolar', precio=20.0, tipo='dolar'
+            CREATE TABLE IF NOT EXISTS prices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT NOT NULL,
+                precio REAL NOT NULL,
+                tipo TEXT NOT NULL
+            )
         """)
 
-        conn.commit()
+        # ---------- Semillas por única vez ----------
+        # 30 para normal, jueves, pensión y extraviado; 20 para dólar.
+        defaults = [
+            (1, "Tarifa normal",   30.0, "normal"),
+            (2, "Tarifa jueves",   40.0, "jueves"),
+            (3, "Tarifa pensión",  300.0, "pension"),
+            (4, "Tarifa extraviado",300.0,"extraviado"),
+            (5, "dolar",           20.0, "dolar"),
+            # Si quisieras también una tarifa 'hospedaje' por 30, descomenta la línea de abajo:
+            # (6, "Tarifa hospedaje", 30.0, "hospedaje"),
+        ]
+        for _id, nombre, precio, tipo in defaults:
+            cursor.execute(
+                "INSERT OR IGNORE INTO prices (id, nombre, precio, tipo) VALUES (?, ?, ?, ?)",
+                (_id, nombre, precio, tipo)
+            )
+
+        # Config por defecto (solo si no existen)
+        cursor.execute("INSERT OR IGNORE INTO configuraciones (clave, valor) VALUES ('cajones_normales','19')")
+        cursor.execute("INSERT OR IGNORE INTO configuraciones (clave, valor) VALUES ('cajones_hospedaje','4')")
+
 
     if get_config("cajones_normales") is None:
         set_config("cajones_normales", "19")
