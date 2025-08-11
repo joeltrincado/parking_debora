@@ -60,13 +60,22 @@ def init_db():
             tipo TEXT NOT NULL
         )
     """)
+        
+    cursor.execute("SELECT 1 FROM prices WHERE tipo='dolar' LIMIT 1")
+    if cursor.fetchone() is None:
+        cursor.execute("""
+            INSERT INTO prices (id, nombre, precio, tipo)
+            VALUES (5, 'dolar', 20.0, 'dolar')
+            ON CONFLICT(id) DO UPDATE SET nombre='dolar', precio=20.0, tipo='dolar'
+        """)
 
         conn.commit()
 
     if get_config("cajones_normales") is None:
         set_config("cajones_normales", "19")
-    if get_config("cajones_airbnb") is None:
-        set_config("cajones_airbnb", "4")
+    if get_config("cajones_hospedaje") is None:   # antes cajones_airbnb
+        set_config("cajones_hospedaje", "4")
+
 
 def insert_entry(codigo, hora_entrada, fecha_entrada, hora_salida=None, fecha_salida=None, type_entry=None, precio=0, status=""):
     try:
@@ -118,6 +127,17 @@ def get_all_prices():
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM prices")
         return cursor.fetchall()
+    
+def get_dollar_price():
+    with create_connection() as conn:
+        cursor = conn.cursor()
+        # Mejor por tipo, y con LIMIT 1
+        cursor.execute("SELECT precio FROM prices WHERE tipo = 'dolar' LIMIT 1")
+        row = cursor.fetchone()
+        try:
+            return float(row[0]) if row and row[0] is not None else 0.0
+        except (TypeError, ValueError):
+            return 0.0
 
 def get_config(clave):
     with create_connection() as conn:
@@ -205,7 +225,7 @@ def add_prices_from_excel(path_excel):
     conn.commit()
     conn.close()
 
-def set_all_prices(normal_name, normal_price, jueves_name, jueves_price, pension_name, pension_price, extraviado_name, extraviado_price, dolar_price):
+def set_all_prices(normal_name, normal_price, jueves_name, jueves_price, pension_name, pension_price, extraviado_name, extraviado_price):
     try:
         with create_connection() as conn:
             cursor = conn.cursor()
@@ -233,15 +253,22 @@ def set_all_prices(normal_name, normal_price, jueves_name, jueves_price, pension
                 ON CONFLICT(id) DO UPDATE SET nombre=excluded.nombre, precio=excluded.precio, tipo='extraviado'
             """, (extraviado_name, extraviado_price))
 
+            conn.commit()
+    except sqlite3.Error as e:
+        print(f"[DB] Error set_all_prices: {e}")
+
+def set_price_dollar(dollar_price):
+    try:
+        with create_connection() as conn:
+            cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO prices (id, nombre, precio, tipo)
                 VALUES (5, ?, ?, 'dolar')
                 ON CONFLICT(id) DO UPDATE SET nombre=excluded.nombre, precio=excluded.precio, tipo='dolar'
-            """, ("Dolar", dolar_price))
-
+            """, ("dolar", dollar_price))
             conn.commit()
     except sqlite3.Error as e:
-        print(f"[DB] Error set_all_prices: {e}")
+        print(f"[DB] Error set_price_dollar: {e}")
 
 def get_price_by_type(tipo):
     with create_connection() as conn:

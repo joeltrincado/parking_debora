@@ -1,1 +1,4 @@
-ID,Código,Hora entrada,Fecha entrada,Hora salida,Fecha salida,Tipo,Precio unitario,Total,Duración (min),Duración (horas),Día de la semana,Cobro aplicado
+﻿ID,Código,Hora entrada,Fecha entrada,Hora salida,Fecha salida,Tipo,Precio unitario,Duración (min),Duración (horas),Día de la semana,Cobro aplicado,Total (MXN),Total (USD),Moneda utilizada
+1,20250811142129,14:21:29,2025-08-11,14:22:24,2025-08-11,Boleto normal,30.0,0,0.0,Lunes,Normal (0 min),30.0,1.5,USD
+2,20250811142134,14:21:34,2025-08-11,14:24:31,2025-08-11,Boleto normal,30.0,2,0.03,Lunes,Normal (2 min),30.0,1.5,USD
+3,20250811142123,14:21:23,2025-08-11,14:24:45,2025-08-11,Boleto normal,30.0,3,0.05,Lunes,Normal (3 min),30.0,1.5,MXN

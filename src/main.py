@@ -11,7 +11,7 @@ from database import (
     init_db, get_all_entries, insert_entry, delete_entry,
     get_entry_by_code, get_price_by_day, get_price_by_type,
     insert_out, set_all_prices, get_all_outs, set_config,
-    delete_all_outs, get_config, get_entry_by_type,
+    delete_all_outs, get_config, get_entry_by_type,set_price_dollar, get_dollar_price
 )
 
 from helpers.helpers import (
@@ -34,17 +34,17 @@ def main(page: ft.Page):
     # Variables para saber si el usuario realmente seleccionó una fecha/hora
 
     state = {
-        "current_tab": 0,
-        "business_name": "Estacionamiento CECI",
-        "fee": 0,
-        "entries": [],
-        "outs": [],
-        "total": 0,
-        "nBoxes": 19,
-        "nBoxesAirBnb": 2,
-        "config": None,
-        "printer": None,
+    "current_tab": 0,
+    "business_name": "Estacionamiento CECI",
+    "entries": [],
+    "nBoxes": 19,
+    "nBoxesHospedaje": 2,  
+    "config": None,
+    "printer": None,
+    "pending_checkout": None,
+    "dolar_price": None
     }
+
     datacells = getDatacell(state["entries"])
     columns = getDataColumns(["FOLIO", "CÓDIGO", "FECHA", "HORA", "TIPO DE ENTRADA"])
     PASSWORD = "H0608"  # Puedes cambiarla o hacerla configurable
@@ -73,17 +73,18 @@ def main(page: ft.Page):
 
     def update_boxes_view():
         total_normales = state["nBoxes"]
-        total_airbnb = state["nBoxesAirBnb"]
+        total_hosp = state["nBoxesHospedaje"]
 
-        actuales_normales = len([e for e in state["entries"] if e[6] == "Boleto normal" or e[6] == "Boleto Pensión" or e[6] == "Boleto Extraviado"])
-        actuales_airbnb = len([e for e in state["entries"] if e[6] == "Boleto AirBnb"])
+        actuales_normales = len([e for e in state["entries"] if e[6] in ("Boleto normal","Boleto Pensión","Boleto Extraviado")])
+        actuales_hosp = len([e for e in state["entries"] if e[6] == "Boleto Hospedaje"])
 
         disponibles_normales = max(total_normales - actuales_normales, 0)
-        disponibles_airbnb = max(total_airbnb - actuales_airbnb, 0)
+        disponibles_hosp = max(total_hosp - actuales_hosp, 0)
 
         boxs.value = str(disponibles_normales)
-        boxsText_airbnb.value = str(disponibles_airbnb)
+        boxsText_hospedaje.value = str(disponibles_hosp)   # antes boxsText_hospedaje
         page.update()
+
 
 
     def handle_menu_protected(target_index):
@@ -126,12 +127,11 @@ def main(page: ft.Page):
     def guardar_cajones(e):
         try:
             state["nBoxes"] = int(input_normal_boxes.value)
-            state["nBoxesAirBnb"] = int(input_airbnb_boxes.value)
+            state["nBoxesHospedaje"] = int(input_hospedaje_boxes.value)  # antes input_hospedaje_boxes
             set_config("cajones_normales", str(state["nBoxes"]))
-            set_config("cajones_airbnb", str(state["nBoxesAirBnb"]))
+            set_config("cajones_hospedaje", str(state["nBoxesHospedaje"]))  # antes cajones_hospedaje
             update_boxes_view()
             alert_config_cajones.open = False
-            
             page.open(ft.SnackBar(ft.Text("Configuración actualizada")))
         except ValueError:
             page.open(ft.SnackBar(ft.Text("Valores inválidos")))
@@ -139,15 +139,17 @@ def main(page: ft.Page):
 
 
 
+
     def load_boxes_config():
         try:
             cajones = get_config("cajones_normales")
-            airbnb = get_config("cajones_airbnb")
+            hosp = get_config("cajones_hospedaje")   # antes cajones_hospedaje
             state["nBoxes"] = int(cajones) if cajones else 19
-            state["nBoxesAirBnb"] = int(airbnb) if airbnb else 2
+            state["nBoxesHospedaje"] = int(hosp) if hosp else 2
         except:
             state["nBoxes"] = 19
-            state["nBoxesAirBnb"] = 2
+            state["nBoxesHospedaje"] = 2
+
 
 
     def close_alert_outs(e):
@@ -177,90 +179,142 @@ def main(page: ft.Page):
     alert_ring.open = False
     
     def send_email(file):
+        import os
+        from dotenv import load_dotenv;
+        from pathlib import Path
         from email.mime.multipart import MIMEMultipart
         from email.mime.text import MIMEText
+        from email.mime.application import MIMEApplication
         import smtplib
+        load_dotenv()
 
+        # --- Variables de entorno ---
+        host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        port = int(os.getenv("SMTP_PORT", "587"))
+        user = os.getenv("SMTP_USER")  
+        password = os.getenv("SMTP_PASS") 
+        use_ssl = os.getenv("SMTP_SSL", "false").strip().lower() in ("1", "true", "yes", "on")
+        use_starttls = os.getenv("SMTP_STARTTLS", "true").strip().lower() in ("1", "true", "yes", "on")
+
+        email_from = os.getenv("EMAIL_FROM", user or "")
+        email_to = [x.strip() for x in os.getenv("EMAIL_TO", email_from).split(",") if x.strip()]
+        subject_prefix = os.getenv("EMAIL_SUBJECT_PREFIX", "Reporte de salidas")
+        body_text = os.getenv("EMAIL_BODY", "Reporte de Usuarios")
+
+        # --- Componer mensaje ---
         message = MIMEMultipart()
-        message["From"] = "joeltrincadov@gmail.com"
-        message["To"] = "joeltrincadov@gmail.com"
-        message["Subject"] = f"Reporte de salidas {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        message["From"] = email_from
+        message["To"] = ", ".join(email_to)
+        message["Subject"] = f"{subject_prefix} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        message.attach(MIMEText(body_text, "plain", "utf-8"))
 
+        # Adjuntar CSV correctamente
         with open(file, "rb") as f:
-            attachment = MIMEText(f.read(), "base64", "csv")
-            attachment.add_header("Content-Disposition", "attachment", filename=file)
-            message.attach(attachment)
-        message.attach(
-            MIMEText(
-                "Reporte de Usuarios",
-                "plain",
-            )
-        )
+            attachment = MIMEApplication(f.read(), _subtype="csv")
+        attachment.add_header("Content-Disposition", "attachment", filename=Path(file).name)
+        message.attach(attachment)
+
+        # --- Envío ---
         try:
-            server = smtplib.SMTP("smtp.gmail.com", 587)
-            server.starttls()
-            server.login("reportestectronic@gmail.com", "tdll hiwb qmrz pqec")
-            server.sendmail("joeltrincadov@gmail.com", "joeltrincadov@gmail.com", message.as_string())
-            server.quit()
-            snack_bar = ft.SnackBar(ft.Text("Correo enviado correctamente", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE), bgcolor=ft.Colors.GREEN_400, duration=ft.Duration(seconds=3))
+            if use_ssl:
+                with smtplib.SMTP_SSL(host, port) as server:
+                    if user and password:
+                        server.login(user, password)
+                    server.sendmail(email_from, email_to, message.as_string())
+            else:
+                with smtplib.SMTP(host, port) as server:
+                    if use_starttls:
+                        server.starttls()
+                    if user and password:
+                        server.login(user, password)
+                    server.sendmail(email_from, email_to, message.as_string())
+
+            snack_bar = ft.SnackBar(
+                ft.Text("Correo enviado correctamente", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                bgcolor=ft.Colors.GREEN_400, duration=ft.Duration(seconds=3)
+            )
             page.open(snack_bar)
         except Exception as e:
-            snack_bar = ft.SnackBar(ft.Text(f"Error al enviar el correo: {e}", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE), bgcolor=ft.Colors.RED_400, duration=ft.Duration(seconds=3))
+            snack_bar = ft.SnackBar(
+                ft.Text(f"Error al enviar el correo: {e}", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                bgcolor=ft.Colors.RED_400, duration=ft.Duration(seconds=3)
+            )
             page.open(snack_bar)
         page.update()
+
 
     def download_report_csv(e):
         import pandas as pd
         import os
+
         plain_data = get_plain_data()
         registros = []
 
+        # Tipo de cambio actual (MXN por 1 USD)
+        try:
+            tc = float(get_dollar_price() or 0.0)
+        except:
+            tc = 0.0
+
         for r in plain_data:
-            entrada = datetime.strptime(f"{r[3]} {r[2]}", "%Y-%m-%d %H:%M:%S")
-            salida = datetime.strptime(f"{r[5]} {r[4]}", "%Y-%m-%d %H:%M:%S")
+            # r: [id, codigo, hora_ent, fecha_ent, hora_sal, fecha_sal, tipo, precio, total]
+            try:
+                entrada = datetime.strptime(f"{r[3]} {r[2]}", "%Y-%m-%d %H:%M:%S")
+                salida = datetime.strptime(f"{r[5]} {r[4]}", "%Y-%m-%d %H:%M:%S")
+            except:
+                entrada = salida = datetime.now()
+
             duracion = salida - entrada
             duracion_min = int(duracion.total_seconds() // 60)
             duracion_hrs = round(duracion_min / 60, 2)
+
             dias_semana = {
-                "Monday": "Lunes",
-                "Tuesday": "Martes",
-                "Wednesday": "Miércoles",
-                "Thursday": "Jueves",
-                "Friday": "Viernes",
-                "Saturday": "Sábado",
-                "Sunday": "Domingo"
+                "Monday": "Lunes", "Tuesday": "Martes", "Wednesday": "Miércoles",
+                "Thursday": "Jueves", "Friday": "Viernes",
+                "Saturday": "Sábado", "Sunday": "Domingo"
             }
+            dia_semana = dias_semana.get(salida.strftime('%A'), salida.strftime('%A'))
 
-            dia_semana_ingles = salida.strftime('%A')
-            dia_semana = dias_semana.get(dia_semana_ingles, dia_semana_ingles)
-
+            # Etiqueta de cobro
             if r[6] == "Boleto normal":
-                cobro = f"Normal ({duracion_min} min)"
-                if duracion_min > 60:
-                    cobro += " + adicional"
+                cobro = f"Normal ({duracion_min} min)" + (" + adicional" if duracion_min > 60 else "")
             elif r[6] == "Boleto Pensión":
                 cobro = "Pensión diaria"
             elif r[6] == "Boleto Extraviado":
                 cobro = "Tarifa fija por extravío"
             else:
-                cobro = "AirBnb"
+                cobro = "Hospedaje"
+
+            # Moneda usada (si no existe, asumimos MXN)
+            moneda_key = f"moneda:{r[1]}:{r[4]}:{r[5]}"
+            moneda_usada = get_config(moneda_key) or "MXN"
+
+            # Totales (usamos el total guardado en BD para MXN y convertimos a USD)
+            try:
+                total_mxn = float(r[8] or 0.0)
+            except:
+                total_mxn = 0.0
+            total_usd = round((total_mxn / tc), 2) if tc > 0 else 0.0
 
             registros.append([
-                r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8],
-                duracion_min, duracion_hrs, dia_semana, cobro
+                r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7],  # hasta Precio unitario
+                duracion_min, duracion_hrs, dia_semana, cobro,   # métricas
+                round(total_mxn, 2), total_usd, moneda_usada     # columnas nuevas
             ])
 
         columnas = [
             "ID", "Código", "Hora entrada", "Fecha entrada", "Hora salida", "Fecha salida",
-            "Tipo", "Precio unitario", "Total", "Duración (min)", "Duración (horas)",
-            "Día de la semana", "Cobro aplicado"
+            "Tipo", "Precio unitario",
+            "Duración (min)", "Duración (horas)",
+            "Día de la semana", "Cobro aplicado",
+            "Total (MXN)", "Total (USD)", "Moneda utilizada"
         ]
 
         df = pd.DataFrame(registros, columns=columnas)
         alert_ring.open = True
         page.update()
         try:
-            df.to_csv(path_or_buf='reporte.csv', index=False)
+            df.to_csv(path_or_buf='reporte.csv', index=False, encoding="utf-8-sig")
             send_email(file=str(os.getcwd()) + "/reporte.csv")
             page.open(ft.SnackBar(ft.Text(f"Reporte guardado en {os.getcwd()}")))
         except Exception as ex:
@@ -268,6 +322,8 @@ def main(page: ft.Page):
         alert_ring.open = False
         alert_clean_outs.open = True
         page.update()
+
+
 
     def show_page(index, callback=None):
     # Oculta todas
@@ -304,31 +360,243 @@ def main(page: ft.Page):
 
     def getBD(filtro="Todos"):
         entradas = get_all_entries()
-        if filtro == "Boleto Hospedaje":
-            filtro = "Boleto AirBnb"
         if filtro != "Todos":
             entradas = [e for e in entradas if e[6] == filtro]
 
         state["entries"] = entradas
+        state["dolar_price"] = float(get_dollar_price() or 20.0)
         datacells = getDatacell(state["entries"])
         registers_database.rows.clear()
         registers_database.rows = datacells
 
-        update_boxes_view()  # <- AGREGAR ESTO
+        update_boxes_view() 
         page.update()
 
 
 
-    def close_alert_airbnb_pending(e):
-        alert_airbnb_pending.open = False
+    def close_alert_hospedaje_pending (e):
+        alert_hospedaje_pending .open = False
         page.update()
+
+    def open_currency_dialog(payload):
+        # payload: {code, price_mxn, total_mxn, salida_data, tiempo_texto}
+        state["pending_checkout"] = payload
+
+        mxn_total = float(payload["total_mxn"] or 0.0)
+
+        # Lee TC (MXN por 1 USD)
+        try:
+            _, tc_raw = get_price_by_type("dolar")
+            tc = float(tc_raw or 0.0)
+        except:
+            tc = 0.0
+
+        usd_total = (mxn_total / tc) if tc > 0 else None
+
+        # ---- UI controls ----
+        currency_group = ft.RadioGroup(
+            value="MXN",
+            content=ft.Row(
+                [
+                    ft.Radio(value="MXN", label="MXN"),
+                    ft.Radio(value="USD", label="USD", disabled=(tc <= 0)),
+                ]
+            )
+        )
+
+        tc_text = ft.Text(
+            f"TC: {tc:.4f} MXN por 1 USD" if tc > 0 else "TC no configurado (habilita USD guardando un TC > 0)"
+        )
+        total_text = ft.Text("")
+        amount_field = ft.TextField(
+            label="Monto entregado",
+            keyboard_type=ft.KeyboardType.NUMBER,
+            on_change=lambda e: update_totals(),
+            on_submit=lambda e: on_confirm(),
+            autofocus=True,
+            width=250,
+        )
+        change_text = ft.Text("")
+
+        btn_cancel = ft.TextButton("Cancelar", on_click=lambda e: close_currency_dialog())
+        btn_ok = ft.FilledButton("Cobrar e imprimir", on_click=lambda e: on_confirm())
+        btn_ok.disabled = True  # se habilita cuando alcance el total
+
+        # ---- helpers internos ----
+        def _current_total_and_currency():
+            curr = currency_group.value
+            if curr == "USD" and usd_total is not None:
+                return round(usd_total, 2), "USD"
+            return round(mxn_total, 2), "MXN"
+
+        def parse_amount():
+            try:
+                return float((amount_field.value or "").strip())
+            except:
+                return 0.0
+
+        def update_totals():
+            total, curr = _current_total_and_currency()
+            total_text.value = f"Total a pagar: ${total:.2f} {curr}"
+
+            pay = parse_amount()
+            change = pay - total
+
+            if curr == "USD" and tc > 0:
+                # Calcula cambio equivalente en MXN con base en MXN_TOTAL:
+                # pago_mxn = pay*tc; cambio_mxn = pago_mxn - mxn_total
+                pay_mxn = pay * tc
+                change_mxn = pay_mxn - mxn_total
+                if pay >= 0:
+                    change_text.value = f"Cambio: ${change:.2f} USD (≈ ${change_mxn:.2f} MXN)"
+                else:
+                    change_text.value = f"Cambio: -- USD (≈ -- MXN)"
+            else:
+                change_text.value = f"Cambio: ${change:.2f} {curr}" if pay >= 0 else f"Cambio: -- {curr}"
+
+            # Habilita si el monto alcanza el total
+            btn_ok.disabled = pay < total
+            page.update()
+
+        def on_confirm():
+            total, curr = _current_total_and_currency()
+            pay = parse_amount()
+            change = max(pay - total, 0.0)
+
+            # Anexa info al ticket (impresión). La BD se guarda en MXN en handle_currency_select.
+            salida_data = payload["salida_data"]
+            salida_data["paga"] = f"{pay:.2f} {curr}"
+            salida_data["cambio"] = f"{change:.2f} {curr}"
+
+            # Si fue en USD, también manda equivalentes en MXN para el ticket
+            if curr == "USD" and tc > 0:
+                paga_mxn = pay * tc
+                cambio_mxn = max(paga_mxn - mxn_total, 0.0)
+                salida_data["paga_mxn"] = f"{paga_mxn:.2f} MXN"
+                salida_data["cambio_mxn"] = f"{cambio_mxn:.2f} MXN"
+
+            handle_currency_select(curr)
+
+        # Recalcular al cambiar moneda
+        currency_group.on_change = lambda e: update_totals()
+
+        # Armar diálogo
+        currency_alert.title = ft.Text("Selecciona la moneda y captura el pago")
+        currency_alert.content = ft.Column(
+            [currency_group, tc_text, total_text, amount_field, change_text],
+            spacing=8,
+            tight=True,
+            width=360
+        )
+        currency_alert.actions = [btn_cancel, btn_ok]
+        currency_alert.open = True
+
+        update_totals()
+        page.update()
+
+
+
+    def close_currency_dialog():
+        currency_alert.open = False
+        state["pending_checkout"] = None
+        page.update()
+
+    def handle_currency_select(moneda):
+        data = state.get("pending_checkout")
+        if not data:
+            close_currency_dialog()
+            return
+
+        code = data["code"]
+        price_mxn = data["price_mxn"]
+        total_mxn = data["total_mxn"]
+        salida_data = data["salida_data"]
+        tiempo_texto = data["tiempo_texto"]
+
+        # Preparar impresión según moneda seleccionada (DB siempre en MXN)
+        total_str = f"{total_mxn:.2f} MXN"
+        precio_unit_str = f"{price_mxn:.2f} MXN"
+
+        if moneda == "USD":
+            _, tc = get_price_by_type("dolar")  # tc = pesos por 1 USD
+            try:
+                tc = float(tc)
+            except:
+                tc = 0.0
+
+            if tc <= 0:
+                page.open(ft.SnackBar(ft.Text("Tipo de cambio inválido. Se cobrará en MXN.")))
+            else:
+                total_usd = total_mxn / tc
+                price_usd = price_mxn / tc if price_mxn else 0.0
+                total_str = f"{total_usd:.2f} USD"
+                precio_unit_str = f"{price_usd:.2f} USD"
+                # opcional: anotar TC en el ticket
+                salida_data["tc"] = f"TC: {tc:.4f}"
+
+        # Actualizar datos del ticket para impresión
+        salida_data["total"] = total_str
+        salida_data["precio_unitario"] = precio_unit_str
+        salida_data["moneda"] = "USD" if moneda == "USD" else "MXN"
+
+        # 1) Registrar salida en DB en MXN
+        insert_out(code[1], code[2], code[3], salida_data["hora_salida"], datetime.now().strftime("%Y-%m-%d"),
+                code[6], price_mxn, total_mxn)
+        
+        fecha_salida_iso = datetime.now().strftime("%Y-%m-%d")
+        set_config(
+            f"moneda:{code[1]}:{salida_data['hora_salida']}:{fecha_salida_iso}",
+            salida_data["moneda"]
+        )
+
+        # 2) Borrar entrada
+        delete_entry(code[1])
+
+        # 3) Imprimir ticket de salida
+        if state["printer"]:
+            print_ticket_usb(printer_name=state["printer"], data=salida_data, entrada=False)
+
+        # 4) Refrescar UI
+        getBD()
+        message(f"Boleto de salida generado. Total mostrado: {salida_data['total']}{tiempo_texto}")
+
+        close_currency_dialog()
+
 
     def createOut(code, price=0, total=0):
         out_date = datetime.now().strftime("%Y-%m-%d")
         fecha_salida_formato = formatear_fecha(datetime.now().strftime("%Y-%m-%d"))
         out_time = datetime.now().strftime("%H:%M:%S")
- 
+
+        if es_hospedaje(code[6]):
+            salida_data = {
+                "placa": code[1],
+                "hora_entrada": code[2],
+                "fecha_entrada": code[3],
+                "hora_salida": out_time,
+                "fecha_salida": fecha_salida_formato,
+                "tipo": code[6],
+                "total": "0.00 MXN",
+                "precio_unitario": "0.00 MXN",
+                "moneda": "MXN",
+            }
+            insert_out(code[1], code[2], code[3], out_time, datetime.now().strftime("%Y-%m-%d"),
+                    code[6], 0.0, 0.0)
+            
+            set_config(
+                f"moneda:{code[1]}:{out_time}:{datetime.now().strftime('%Y-%m-%d')}",
+                "MXN"
+            )
+            delete_entry(code[1])
+            if state["printer"]:
+                print_ticket_usb(printer_name=state["printer"], data=salida_data, entrada=False)
+            getBD()
+            message("Boleto de Hospedaje cerrado. Total: $0.00 MXN")
+            return
         tiempo_texto = ""
+        price_mxn = 0.0
+        total_mxn = 0.0
+
         if code[6] == "Boleto normal":
             entrada = datetime.strptime(f"{code[3]} {code[2]}", "%Y-%m-%d %H:%M:%S")
             salida = datetime.now()
@@ -336,14 +604,12 @@ def main(page: ft.Page):
             tiempo_total_segundos = duracion.total_seconds()
             horas = int(tiempo_total_segundos // 3600)
             minutos = int((tiempo_total_segundos % 3600) // 60)
-
             tiempo_texto = f" | Tiempo: {horas}h {minutos}min"
 
-            # Si estuvo más de 10h, tarifa de pensión
             if tiempo_total_segundos >= 36000:
                 _, precio_unitario = get_price_by_type("pension")
-                total = precio_unitario
-                price = precio_unitario
+                price_mxn = float(precio_unitario or 0.0)
+                total_mxn = price_mxn
                 tiempo_texto += " | Tarifa tipo pensión aplicada"
             else:
                 now = datetime.now()
@@ -353,25 +619,16 @@ def main(page: ft.Page):
 
                 _, precio_unitario = get_price_by_day(aplicar_tarifa_especial)
                 try:
-                    precio_unitario = float(precio_unitario)
+                    price_mxn = float(precio_unitario)
                 except:
-                    precio_unitario = 0.0
+                    price_mxn = 0.0
 
-                # Se cobra la primera hora completa
-                total = precio_unitario
-
-                # Si pasó más de una hora, se calcula el resto por fracciones de 30 min
+                total_mxn = price_mxn
                 if horas >= 1:
                     horas_restantes = horas - 1
-                    total += horas_restantes * precio_unitario
-
+                    total_mxn += horas_restantes * price_mxn
                     if minutos > 0:
-                        if minutos <= 30:
-                            total += precio_unitario / 2
-                        else:
-                            total += precio_unitario
-
-                price = precio_unitario
+                        total_mxn += (price_mxn / 2) if (minutos <= 30) else price_mxn
 
         elif code[6] == "Boleto Pensión":
             entrada = datetime.strptime(f"{code[3]} {code[2]}", "%Y-%m-%d %H:%M:%S")
@@ -379,42 +636,35 @@ def main(page: ft.Page):
             duracion = salida - entrada
             dias = duracion.days + 1 if duracion.seconds > 0 else duracion.days
             _, precio_unitario = get_price_by_type("pension")
-            total = precio_unitario * dias
-            price = precio_unitario
+            price_mxn = float(precio_unitario or 0.0)
+            total_mxn = price_mxn * max(dias, 1)
             tiempo_texto = f" | Tarifa Pensión aplicada ({dias} días)"
 
         elif code[6] == "Boleto Extraviado":
             _, precio_unitario = get_price_by_type("extraviado")
-            total = precio_unitario
-            price = precio_unitario
+            price_mxn = float(precio_unitario or 0.0)
+            total_mxn = price_mxn
             tiempo_texto = " | Tarifa Extraviado aplicada"
 
-        else:  # Boleto AirBnb
-            price = 0.0
-            total = 0.0
-            tiempo_texto = " | Entrada tipo AirBnb"
+        # 2) Preparar datos base del ticket (total se llenará tras elegir moneda)
+        salida_data = {
+            "placa": code[1],
+            "hora_entrada": code[2],
+            "fecha_entrada": code[3],
+            "hora_salida": out_time,
+            "fecha_salida": fecha_salida_formato,
+            "total": "",
+            "tipo": code[6],
+        }
 
-        # Insertar en tabla de salidas
-        insert_out(code[1], code[2], code[3], out_time, out_date, code[6], price, total)
-        delete_entry(code[1])
-
-        # 🖨️ Imprimir ticket de salida
-        if state["printer"]:
-            salida_data = {
-                "placa": code[1],
-                "hora_entrada": code[2],
-                "fecha_entrada": code[3],
-                "hora_salida": out_time,
-                "fecha_salida": fecha_salida_formato,
-                "total": f"{total:.2f}",
-                "tipo": code[6]
-            }
-            print_ticket_usb(printer_name=state["printer"], data=salida_data, entrada=False)
-
-        # Refrescar pantalla
-        getBD()
-        message(f"Boleto de salida generado. Total: ${total:.2f}{tiempo_texto}")
-        page.update()
+        # 3) Abrir diálogo de moneda y finalizar según selección (solo NO-HOSPEDAJE)
+        open_currency_dialog({
+            "code": code,
+            "price_mxn": price_mxn,
+            "total_mxn": total_mxn,
+            "salida_data": salida_data,
+            "tiempo_texto": tiempo_texto
+        })
 
 
 
@@ -424,8 +674,8 @@ def main(page: ft.Page):
         snack_bar = ft.SnackBar(ft.Text("Se han borrado los registros de salidas."))
         page.open(snack_bar)
 
-    def check_airbnb_pending():
-        boletos = get_entry_by_type("Boleto AirBnb")
+    def check_hospedaje_pending():
+        boletos = get_entry_by_type("Boleto Hospedaje")
         hoy = datetime.now().date()
         pendientes = []
 
@@ -438,29 +688,29 @@ def main(page: ft.Page):
                 continue
 
         if pendientes:
-            show_pending_airbnb_alert(pendientes)
+            show_pending_hospedaje_alert(pendientes)
 
-    def show_pending_airbnb_alert(pendientes):
+    def show_pending_hospedaje_alert(pendientes):
         botones = []
 
         for boleto in pendientes:
             texto = f"{boleto[1]} - Sale {boleto[5]}"
             boton = ft.ElevatedButton(
                 text=texto,
-                on_click=lambda e, b=boleto: handle_airbnb_exit_from_alert(b), height=40, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=5))
+                on_click=lambda e, b=boleto: handle_hospedaje_exit_from_alert(b), height=40, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=5))
             )
             botones.append(boton)
 
-        alert_airbnb_pending.content = ft.Column([
-            ft.Text("Boletos tipo AirBnb pendientes de salida:", height=50),
+        alert_hospedaje_pending .content = ft.Column([
+            ft.Text("Boletos tipo hospedaje pendientes de salida:", height=50),
             *botones
         ], height=200, scroll=True)
-        alert_airbnb_pending.open = True
+        alert_hospedaje_pending .open = True
         page.update()
 
-    def handle_airbnb_exit_from_alert(boleto):
+    def handle_hospedaje_exit_from_alert(boleto):
         createOut(boleto)
-        alert_airbnb_pending.open = False
+        alert_hospedaje_pending .open = False
         page.update()
         
 
@@ -541,7 +791,7 @@ def main(page: ft.Page):
 
     # ONCHANGES & ONSUBMITS
 
-    def addAirBnb(plate=""):
+    def addHospedaje(plate=""):
         global hora_seleccionada, fecha_seleccionada 
 
         import re
@@ -551,11 +801,10 @@ def main(page: ft.Page):
         if  hora_seleccionada == False  or  fecha_seleccionada == False:
             message("Debes seleccionar fecha y hora de salida")
             return
-        entradas = get_all_entries()
-        for entrada in entradas:
-            if entrada[1] == plate and entrada[6] == "Boleto AirBnb":
-                message("Esta placa ya fue registrada como Boleto AirBnb")
-                return
+        ex = get_entry_by_code(plate)
+        if ex and ex[6] == "Boleto Hospedaje":
+            message("Esta placa ya fue registrada como Boleto Hospedaje")
+            return
 
         entry = {
             "codigo": plate,
@@ -565,24 +814,20 @@ def main(page: ft.Page):
             "fecha_salida": date_picker.value.strftime("%Y-%m-%d"),
             "precio": 0,
             "status": "Entrada"
-            }
-        
+        }
+
         ticket_data = {
             "placa": entry["codigo"],
             "hora_entrada": entry["hora_entrada"],
             "fecha_entrada": formatear_fecha(datetime.now().strftime("%Y-%m-%d")),
-            "tipo": "Boleto AirBnb",
+            "tipo": "Boleto Hospedaje",
             "precio": "Precio Especial",
             "titulo": "  Hospedaje"
         }
 
-
-
-
-
         insert_entry(entry["codigo"], entry["hora_entrada"], entry["fecha"],
                     entry["hora_salida"], entry["fecha_salida"],
-                    "Boleto AirBnb", entry["precio"], "Boleto AirBnb")
+                    "Boleto Hospedaje", entry["precio"], "Boleto Hospedaje")
         print_ticket_usb(printer_name=state["printer"], data=ticket_data)
 
 
@@ -602,7 +847,7 @@ def main(page: ft.Page):
 
 
 
-    def airBnbOut(code):
+    def hospedajeOut(code):
         try:
             entry_date = datetime.strptime(code[5], "%Y-%m-%d").date()
         except Exception:
@@ -613,8 +858,7 @@ def main(page: ft.Page):
         if today >= entry_date:
             createOut(code)
         else:
-            codigo = code[1]
-            message(f"El boleto con placa {codigo} no puede salir hoy")
+            message(f"El boleto con placa {code[1]} no puede salir hoy")
 
     def formatear_fecha(fecha_iso):
         meses = [
@@ -691,7 +935,7 @@ def main(page: ft.Page):
         elif valor == "pension":
             imprimir_ticket_y_guardar(codigo, fecha, hora, "Boleto Pensión")
 
-        elif valor == "airbnb":
+        elif valor == "hospedaje":
             if not state["printer"]:
                 message("No hay impresora configurada. No se registró la entrada.")
                 return
@@ -715,7 +959,7 @@ def main(page: ft.Page):
                 fecha_entrada=fecha,
                 hora_salida=None,
                 fecha_salida=None,
-                type_entry="Boleto extraviado",
+                type_entry="Boleto Extraviado",
                 precio=precio_unitario,
                 status="Entrada"
             )
@@ -725,8 +969,8 @@ def main(page: ft.Page):
             if code is None:
                 message()
             else:
-                if code[6] == "Boleto AirBnb":
-                    airBnbOut(code)
+                if code[6] == "Boleto Hospedaje":
+                     hospedajeOut(code)
                 else:
                     createOut(code)
         read_qr.value = ""
@@ -755,11 +999,12 @@ def main(page: ft.Page):
 
     def abrir_dialog_config():
         input_normal_boxes.value = str(state["nBoxes"])
-        input_airbnb_boxes.value = str(state["nBoxesAirBnb"])
+        input_hospedaje_boxes.value = str(state["nBoxesHospedaje"])
         page.open(alert_config_cajones)
         page.update()
-
-
+    def es_hospedaje(tipo: str) -> bool:
+        return (tipo or "").strip().lower() == "boleto hospedaje"
+    
     def delete_registers(e):
         alert_delete_registers.open = True
         page.update()
@@ -788,7 +1033,7 @@ def main(page: ft.Page):
         hora_seleccionada = True
         page.update()
 
-    def handle_accept_airbnb(e):
+    def handle_accept_hospedaje(e):
         import re
         
         placa = plateField.value.strip().upper()
@@ -802,7 +1047,7 @@ def main(page: ft.Page):
             message("Debes seleccionar fecha y hora de salida")
             return
         
-        addAirBnb(plate=placa)        
+        addHospedaje(plate=placa)        
         getBD()
         alert.open = False
         
@@ -815,15 +1060,19 @@ def main(page: ft.Page):
             name_fee_jueves.value, float(price_fee_jueves.value),
             name_fee_pension.value, float(price_fee_pension.value),
             name_fee_extraviado.value, float(price_fee_extraviado.value),
-            float(price_fee_dolar.value)
                 )
         show_page(0)
         page.update() 
 
     def show_lost_ticket_dialog():
-        entradas = get_all_entries()
-        botones = []
+        # Solo entradas elegibles (NO Boleto Hospedaje)
+        entradas = [e for e in get_all_entries() if not es_hospedaje(e[6])]
 
+        if not entradas:
+            page.open(ft.SnackBar(ft.Text("No hay boletos elegibles para salida por extravío.")))
+            return
+
+        botones = []
         for entrada in entradas:
             texto = f"{entrada[1]} - {entrada[3]} {entrada[2]} - {entrada[6]}"
             boton = ft.TextButton(
@@ -833,18 +1082,32 @@ def main(page: ft.Page):
             )
             botones.append(boton)
 
-        alert_lost_ticket.content = ft.Column([
-            ft.Text("Selecciona la entrada extraviada:", size=16),
-            *botones
-        ], scroll=True, height=300)
+        alert_lost_ticket.content = ft.Column(
+            [
+                ft.Text("Selecciona la entrada extraviada (Boleto hospedaje no permitido):", size=16),
+                *botones
+            ],
+            scroll=True, height=300
+        )
         alert_lost_ticket.open = True
         page.update()
-
     def confirm_lost_ticket_exit(code):
+        # Doble verificación de que NO sea un boleto de hospedaje
+        if (code[6] or "").strip().lower() == "boleto hospedaje":
+            message("Los boletos de hospedaje no pueden salir por extravío. Solo en la fecha de salida o después.")
+            alert_lost_ticket.open = False
+            page.update()
+            return
+
         _, precio_unitario = get_price_by_type("extraviado")
         hora = datetime.now().strftime("%H:%M:%S")
         fecha = datetime.now().strftime("%Y-%m-%d")
+
         insert_out(code[1], code[2], code[3], hora, fecha, "Boleto Extraviado", precio_unitario, precio_unitario)
+        set_config(
+            f"moneda:{code[1]}:{hora}:{fecha}",
+            "MXN"
+        )
         delete_entry(code[1])
         update_boxes_view()
         message(f"Boleto extraviado cerrado. Total: ${precio_unitario:.2f}")
@@ -853,19 +1116,27 @@ def main(page: ft.Page):
         page.update()
 
 
-
     def close_alert_lost():
         alert_lost_ticket.open = False
         page.update()
 
+    def save_price_dolar(e):
+        try:
+            price_dolar = float(price_fee_dolar.value)
+        except:
+            page.open(ft.SnackBar(ft.Text("Ingresa un número válido para el dólar")))
+            return
+        set_price_dollar(price_dolar)
+        state["dolar_price"] = price_dolar
+        page.open(ft.SnackBar(ft.Text("Tipo de cambio guardado")))
+        show_page(0)
+        page.update()
 
     ############################################################################################################
-
-
  
     # PAGES
     input_normal_boxes = TextField(label="Cajones normales", keyboard_type=ft.KeyboardType.NUMBER).build()
-    input_airbnb_boxes = TextField(label="Cajones AirBnb", keyboard_type=ft.KeyboardType.NUMBER).build()
+    input_hospedaje_boxes = TextField(label="Cajones de hospedaje", keyboard_type=ft.KeyboardType.NUMBER).build()
     plateField = TextField(label="Placa").build()
 
     alert_password = ft.AlertDialog(
@@ -885,8 +1156,14 @@ def main(page: ft.Page):
         width=450
     ).build()
 
-
-
+    currency_alert = ft.AlertDialog(
+        modal=True,
+        title=ft.Text("Moneda"),
+        content=ft.Text(""),
+        actions=[],
+        shape=ft.RoundedRectangleBorder(radius=8),
+    )
+    currency_alert.open = False
 
     alert_config_cajones = ft.AlertDialog(
         modal=True,
@@ -895,7 +1172,7 @@ def main(page: ft.Page):
         content=ft.Column([
             
             input_normal_boxes,
-            input_airbnb_boxes
+            input_hospedaje_boxes
         ], spacing=10),
         width=400,
         height=150,
@@ -909,7 +1186,7 @@ def main(page: ft.Page):
     time_picker = ft.TimePicker(
         confirm_text="Confirmar",
         cancel_text="Cancelar",
-        error_invalid_text="Tempo fuera de rango",
+        error_invalid_text="Tiempo fuera de rango",
         help_text="Elige tu zona horaria",
         on_change=handle_change_time,
     )
@@ -934,14 +1211,15 @@ def main(page: ft.Page):
             textDate,
         ], expand=True
     )
-    read_qr = TextField(label="Leer QR", keyboard_type=ft.KeyboardType.NUMBER, onSubmit=onSubmitReadQr).build()
+    read_qr = TextField(label="Leer QR o comando",keyboard_type=ft.KeyboardType.TEXT,onSubmit=onSubmitReadQr).build()
+
     filtro_tipo = ft.Dropdown(
     label="Filtrar por tipo",
     options=[
         ft.dropdown.Option("Todos"),
         ft.dropdown.Option("Boleto normal"),
         ft.dropdown.Option("Boleto Pensión"),
-        ft.dropdown.Option("Boleto extraviado"),
+        ft.dropdown.Option("Boleto Extraviado"),
         ft.dropdown.Option("Boleto Hospedaje")
     ],
     value="Todos",
@@ -953,7 +1231,7 @@ def main(page: ft.Page):
     alert_delete_registers = Alert(content=ft.Text("Seguro que desea borrar los registros?"), action="Borrar", onAdd=delete_all, onCancel=closeAlertRegisters).build()
     alert_delete_registers.open = False
     boxs = ft.Text("19", size=44, text_align=ft.TextAlign.CENTER, expand=True)
-    boxsText_airbnb = ft.Text("2", size=44, text_align=ft.TextAlign.CENTER, expand=True)
+    boxsText_hospedaje = ft.Text("2", size=44, text_align=ft.TextAlign.CENTER, expand=True)
     content_data = ft.Column(
         [
             ft.Row(
@@ -978,20 +1256,20 @@ def main(page: ft.Page):
             )
         ]
     )
-    boxs_airbnb = ft.Column(
+    boxs_hospedaje = ft.Column(
         [
             ft.Row([
                 ft.Text("CAJONES DISPONIBLE HOSPEDAJE", size=16, weight=ft.FontWeight.BOLD, expand=True),
                 ft.IconButton(icon=ft.Icons.SETTINGS, icon_color=ft.Colors.GREY_500, tooltip="Editar cajones", on_click=lambda e: abrir_config_cajones())
             ]),
             ft.Row([
-                boxsText_airbnb
+                boxsText_hospedaje
             ], expand=True, alignment=ft.MainAxisAlignment.CENTER
             )
         ]
     )
     containerBoxs = Container(business_name=state["business_name"], content=last_entry, height=130).build()
-    containerBoxs_airbnb = Container(business_name=state["business_name"], content=boxs_airbnb, height=130).build()
+    containerBoxs_hospedaje = Container(business_name=state["business_name"], content=boxs_hospedaje, height=130).build()
 
     registers_database = ft.DataTable(
     columns= columns,
@@ -999,15 +1277,15 @@ def main(page: ft.Page):
     expand=True,
     )
 
-    alert_airbnb_pending = Alert(
-        title="Boletos AirBnb Pendientes",
+    alert_hospedaje_pending  = Alert(
+        title="Boletos hospedaje Pendientes",
         content=ft.Text(""),
-        onCancel=close_alert_airbnb_pending,
+        onCancel=close_alert_hospedaje_pending ,
         action=None,
         height=250,
         width=300
     ).build()
-    alert_airbnb_pending.open = False
+    alert_hospedaje_pending .open = False
 
     alert_clean_outs = Alert(
         title="¿Limpiar base de datos de salidas?",
@@ -1027,9 +1305,10 @@ def main(page: ft.Page):
     bgcolor=ft.Colors.ORANGE_300,
     on_click=lambda e: show_lost_ticket_dialog()
 ).build()
-
-
-
+    
+    
+    price_fee_dolar = TextField(label="Precio dolar", keyboard_type=ft.KeyboardType.NUMBER, width=180).build()
+    btn_dolar = Button(text="GUARDAR", on_click=lambda e: save_price_dolar(e), width=120, icon=ft.Icons.SAVE).build()
 
     page_0 = ft.Row(
         [
@@ -1037,10 +1316,21 @@ def main(page: ft.Page):
                 [
                     Container(height=200, business_name=state["business_name"], content=content_data).build(),
                     containerBoxs,
-                    containerBoxs_airbnb,
-                    btn_extraviado_manual
+                    containerBoxs_hospedaje,
+                    btn_extraviado_manual,
+                    ft.Row(
+                    [
+                        ft.Column([ft.Text("Precio dolar:"),
+                                   ft.Row(
+                                       [
+                                           price_fee_dolar,
+                                           btn_dolar
+                                       ]
+                                   )]),
+                    ], expand=True, alignment=ft.MainAxisAlignment.CENTER
+                ),
                     
-                ], width=350
+                ], width=350, scroll=ft.ScrollMode.AUTO
             ),
             ft.Column([ 
                     Container(
@@ -1057,7 +1347,7 @@ def main(page: ft.Page):
                 alignment=ft.MainAxisAlignment.START,
             ),
 
-        ], expand=True,vertical_alignment=ft.CrossAxisAlignment.START
+        ], expand=True,vertical_alignment=ft.CrossAxisAlignment.START,
     )
 
     ###########################################################################################################
@@ -1113,8 +1403,6 @@ def main(page: ft.Page):
     name_fee_extraviado = TextField(label="Nombre tarifa extraviado", width=300).build()
     price_fee_extraviado = TextField(label="Precio tarifa extraviado", keyboard_type=ft.KeyboardType.NUMBER, width=300).build()
 
-    price_fee_dolar = TextField(label="Precio dolar", keyboard_type=ft.KeyboardType.NUMBER, width=300).build()
-
 
     fee_container = Container(
         business_name=state["business_name"],
@@ -1133,11 +1421,6 @@ def main(page: ft.Page):
                 ]),
                     ft.Column([name_fee_pension, price_fee_pension]),
                     ft.Column([name_fee_extraviado, price_fee_extraviado]),
-                    ], expand=True, alignment=ft.MainAxisAlignment.CENTER
-                ),
-                ft.Row(
-                    [
-                        ft.Column([ft.Text("Precio dolar:"),price_fee_dolar]),
                     ], expand=True, alignment=ft.MainAxisAlignment.CENTER
                 ),
 
@@ -1169,7 +1452,7 @@ def main(page: ft.Page):
 
      ############################################################################################################
     # ALERTS
-    alert = Alert(content=contentAlert, action="Aceptar", onCancel=close_alert, title="Boleto Hospedaje", height=200, width=500, onAdd=handle_accept_airbnb).build()
+    alert = Alert(content=contentAlert, action="Aceptar", onCancel=close_alert, title="Boleto Hospedaje", height=200, width=500, onAdd=handle_accept_hospedaje).build()
     alert.open = False
     
     ############################################################################################################
@@ -1205,14 +1488,14 @@ def main(page: ft.Page):
         load_boxes_config()
         update_boxes_view()
         getBD()
-
+        price_fee_dolar.value = str(state["dolar_price"] or "")
         # Cargar entradas y refrescar tabla
         state["entries"] = get_all_entries()
         datacells = getDatacell(state["entries"])
         registers_database.rows.clear()
         registers_database.rows = datacells
 
-        check_airbnb_pending()
+        check_hospedaje_pending()
 
         # ✅ Ocultar pantalla de carga y mostrar interfaz real
         page.controls.clear()
@@ -1226,10 +1509,11 @@ def main(page: ft.Page):
                         page_2,
                         alert,
                         alert_password,
-                        alert_airbnb_pending,
+                        alert_hospedaje_pending ,
                         alert_clean_outs,
                         alert_lost_ticket,
                         alert_ring,
+                        currency_alert,
                     ], expand=True
                 ), expand=True
             )
