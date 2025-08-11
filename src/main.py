@@ -160,6 +160,54 @@ def main(page: ft.Page):
             [r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8]]
             for r in registros
         ]
+    
+    progress_ring = ft.ProgressRing()
+
+    # Crear un Alert que contendrá el ProgressRing
+    alert_ring = ft.AlertDialog(
+        modal=True,
+        shape=ft.RoundedRectangleBorder(radius=5),
+        title=ft.Text("Generando reporte..."),
+        content=ft.Row(
+            [
+                progress_ring
+            ], width=50, height=50, alignment=ft.MainAxisAlignment.CENTER
+        ), alignment=ft.alignment.center
+    )
+    alert_ring.open = False
+    
+    def send_email(file):
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+        import smtplib
+
+        message = MIMEMultipart()
+        message["From"] = "joeltrincadov@gmail.com"
+        message["To"] = "joeltrincadov@gmail.com"
+        message["Subject"] = f"Reporte de salidas {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
+        with open(file, "rb") as f:
+            attachment = MIMEText(f.read(), "base64", "csv")
+            attachment.add_header("Content-Disposition", "attachment", filename=file)
+            message.attach(attachment)
+        message.attach(
+            MIMEText(
+                "Reporte de Usuarios",
+                "plain",
+            )
+        )
+        try:
+            server = smtplib.SMTP("smtp.gmail.com", 587)
+            server.starttls()
+            server.login("reportestectronic@gmail.com", "tdll hiwb qmrz pqec")
+            server.sendmail("joeltrincadov@gmail.com", "joeltrincadov@gmail.com", message.as_string())
+            server.quit()
+            snack_bar = ft.SnackBar(ft.Text("Correo enviado correctamente", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE), bgcolor=ft.Colors.GREEN_400, duration=ft.Duration(seconds=3))
+            page.open(snack_bar)
+        except Exception as e:
+            snack_bar = ft.SnackBar(ft.Text(f"Error al enviar el correo: {e}", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE), bgcolor=ft.Colors.RED_400, duration=ft.Duration(seconds=3))
+            page.open(snack_bar)
+        page.update()
 
     def download_report_csv(e):
         import pandas as pd
@@ -209,17 +257,17 @@ def main(page: ft.Page):
         ]
 
         df = pd.DataFrame(registros, columns=columnas)
-
+        alert_ring.open = True
+        page.update()
         try:
             df.to_csv(path_or_buf='reporte.csv', index=False)
+            send_email(file=str(os.getcwd()) + "/reporte.csv")
             page.open(ft.SnackBar(ft.Text(f"Reporte guardado en {os.getcwd()}")))
-            alert_clean_outs.open = True
         except Exception as ex:
             page.open(ft.SnackBar(ft.Text("Error al guardar el reporte: " + str(ex))))
-        
+        alert_ring.open = False
+        alert_clean_outs.open = True
         page.update()
-
-
 
     def show_page(index, callback=None):
     # Oculta todas
@@ -766,10 +814,11 @@ def main(page: ft.Page):
             name_fee_normal.value, float(price_fee_normal.value),
             name_fee_jueves.value, float(price_fee_jueves.value),
             name_fee_pension.value, float(price_fee_pension.value),
-            name_fee_extraviado.value, float(price_fee_extraviado.value)
+            name_fee_extraviado.value, float(price_fee_extraviado.value),
+            float(price_fee_dolar.value)
                 )
         show_page(0)
-        page.update()
+        page.update() 
 
     def show_lost_ticket_dialog():
         entradas = get_all_entries()
@@ -1064,6 +1113,8 @@ def main(page: ft.Page):
     name_fee_extraviado = TextField(label="Nombre tarifa extraviado", width=300).build()
     price_fee_extraviado = TextField(label="Precio tarifa extraviado", keyboard_type=ft.KeyboardType.NUMBER, width=300).build()
 
+    price_fee_dolar = TextField(label="Precio dolar", keyboard_type=ft.KeyboardType.NUMBER, width=300).build()
+
 
     fee_container = Container(
         business_name=state["business_name"],
@@ -1082,6 +1133,11 @@ def main(page: ft.Page):
                 ]),
                     ft.Column([name_fee_pension, price_fee_pension]),
                     ft.Column([name_fee_extraviado, price_fee_extraviado]),
+                    ], expand=True, alignment=ft.MainAxisAlignment.CENTER
+                ),
+                ft.Row(
+                    [
+                        ft.Column([ft.Text("Precio dolar:"),price_fee_dolar]),
                     ], expand=True, alignment=ft.MainAxisAlignment.CENTER
                 ),
 
@@ -1172,7 +1228,8 @@ def main(page: ft.Page):
                         alert_password,
                         alert_airbnb_pending,
                         alert_clean_outs,
-                        alert_lost_ticket
+                        alert_lost_ticket,
+                        alert_ring,
                     ], expand=True
                 ), expand=True
             )

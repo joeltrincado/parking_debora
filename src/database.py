@@ -205,7 +205,7 @@ def add_prices_from_excel(path_excel):
     conn.commit()
     conn.close()
 
-def set_all_prices(normal_name, normal_price, jueves_name, jueves_price, pension_name, pension_price, extraviado_name, extraviado_price):
+def set_all_prices(normal_name, normal_price, jueves_name, jueves_price, pension_name, pension_price, extraviado_name, extraviado_price, dolar_price):
     try:
         with create_connection() as conn:
             cursor = conn.cursor()
@@ -232,6 +232,12 @@ def set_all_prices(normal_name, normal_price, jueves_name, jueves_price, pension
                 VALUES (4, ?, ?, 'extraviado')
                 ON CONFLICT(id) DO UPDATE SET nombre=excluded.nombre, precio=excluded.precio, tipo='extraviado'
             """, (extraviado_name, extraviado_price))
+
+            cursor.execute("""
+                INSERT INTO prices (id, nombre, precio, tipo)
+                VALUES (5, ?, ?, 'dolar')
+                ON CONFLICT(id) DO UPDATE SET nombre=excluded.nombre, precio=excluded.precio, tipo='dolar'
+            """, ("Dolar", dolar_price))
 
             conn.commit()
     except sqlite3.Error as e:
