@@ -1,12 +1,7 @@
-# Importación prioritaria y esencial
 import flet as ft
 from datetime import datetime
 import json
-# Variables globales para verificar si se seleccionó fecha y hora
-hora_seleccionada = False
-fecha_seleccionada = False
 
-# Módulos internos ligeros (funciones no costosas)
 from database import (
     init_db, get_all_entries, insert_entry, delete_entry,
     get_entry_by_code, get_price_by_day, get_price_by_type,
@@ -14,12 +9,13 @@ from database import (
     delete_all_outs, get_config, get_entry_by_type,set_price_dollar, get_dollar_price
 )
 
+hora_seleccionada = False
+fecha_seleccionada = False
+
 from helpers.helpers import (
-    getDatacell, getDataColumns,  # rápidos
-    print_ticket_usb  # pesado si importa win32print => modularizado abajo
+    getDatacell, getDataColumns, 
+    print_ticket_usb  
 )
-
-
 
 def main(page: ft.Page):
     from components.Container import Container
@@ -28,10 +24,8 @@ def main(page: ft.Page):
     from components.Alert import Alert
     from components.AppBar import AppBar
     init_db()
-    
 
-    # GLOBALS VARS
-    # Variables para saber si el usuario realmente seleccionó una fecha/hora
+    
 
     state = {
     "current_tab": 0,
@@ -407,7 +401,6 @@ def main(page: ft.Page):
             )
         )
 
-        # Textos
         tc_text = ft.Text(
             f"TC: {tc:.4f} MXN por 1 USD" if tc > 0 else "TC no configurado (habilita USD guardando un TC > 0)"
         )
@@ -429,7 +422,6 @@ def main(page: ft.Page):
         btn_ok = ft.FilledButton("Cobrar e imprimir", on_click=lambda e: on_confirm())
         btn_ok.disabled = True
 
-        # ---- helpers internos ----
         def _current_total_and_currency():
             curr = currency_group.value
             if curr == "USD" and usd_total is not None:
@@ -446,7 +438,6 @@ def main(page: ft.Page):
             total, curr = _current_total_and_currency()
             total_text.value = f"Total a pagar: ${total:.2f} {curr}"
 
-            # Monto y cambio
             pay = parse_amount()
             change = pay - total
 
@@ -466,7 +457,6 @@ def main(page: ft.Page):
                     dual_text.value = f"Total: ${mxn_total:.2f} MXN"
                     unit_text.value = f"Tarifa: ${price_mxn:.2f} MXN"
 
-            # Habilitar botón si alcanza
             btn_ok.disabled = pay < total
             page.update()
 
@@ -479,6 +469,7 @@ def main(page: ft.Page):
             salida_data["paga"] = f"{pay:.2f} {curr}"
             salida_data["cambio"] = f"{change:.2f} {curr}"
 
+            # Si cobran en USD, agrega también los equivalentes en MXN (útil para ticket)
             if curr == "USD" and tc > 0:
                 paga_mxn = pay * tc
                 cambio_mxn = max(paga_mxn - mxn_total, 0.0)
@@ -511,6 +502,7 @@ def main(page: ft.Page):
 
 
 
+
     def close_currency_dialog():
         currency_alert.open = False
         state["pending_checkout"] = None
@@ -528,19 +520,28 @@ def main(page: ft.Page):
         salida_data = data["salida_data"]
         tiempo_texto = data.get("tiempo_texto", "")
 
-        # Preparar strings de impresión
+        # Strings por defecto (MXN)
         total_str = f"{total_mxn:.2f} MXN"
         precio_unit_str = f"{price_mxn:.2f} MXN"
 
+        # Tipo de cambio
         try:
             _, tc_raw = get_price_by_type("dolar")
             tc = float(tc_raw or 0.0)
         except:
             tc = 0.0
 
+        # Si pagan en USD, TOTAL y TARIFA salen en formato dual "USD / MXN"
         if moneda == "USD" and tc > 0:
-            total_str = f"{(total_mxn / tc):.2f} USD"
-            precio_unit_str = f"{(price_mxn / tc):.2f} USD"
+            usd_total = total_mxn / tc
+            usd_unit = (price_mxn / tc) if price_mxn else 0.0
+
+            # ✅ TOTAL dual para el ticket
+            total_str = f"{usd_total:.2f} USD / {total_mxn:.2f} MXN"
+
+            # ✅ TARIFA dual (opcional). Si NO quieres dual en tarifa, deja: precio_unit_str = f"{usd_unit:.2f} USD"
+            precio_unit_str = f"{usd_unit:.2f} USD / {price_mxn:.2f} MXN"
+
             salida_data["tc"] = f"TC: {tc:.4f}"
 
         salida_data["total"] = total_str
@@ -565,11 +566,10 @@ def main(page: ft.Page):
             )
             set_config(f"moneda:{placa}:{hora_sal_iso}:{fecha_sal_iso}", salida_data["moneda"])
 
-            # Imprimir ticket de salida (opcional)
+            # Imprimir ticket
             if state["printer"]:
                 print_ticket_usb(printer_name=state["printer"], data=salida_data, entrada=False)
 
-            # Refrescar UI
             getBD()
             message(f"Pago por extravío registrado. Total mostrado: {salida_data['total']}")
             close_currency_dialog()
@@ -577,8 +577,11 @@ def main(page: ft.Page):
         # === Fin rama extraviado ===
 
         # ---- Flujo normal (hay entrada en BD) ----
-        insert_out(code[1], code[2], code[3], salida_data["hora_salida"], datetime.now().strftime("%Y-%m-%d"),
-                code[6], price_mxn, total_mxn)
+        insert_out(
+            code[1], code[2], code[3],
+            salida_data["hora_salida"], datetime.now().strftime("%Y-%m-%d"),
+            code[6], price_mxn, total_mxn
+        )
 
         fecha_salida_iso = datetime.now().strftime("%Y-%m-%d")
         set_config(f"moneda:{code[1]}:{salida_data['hora_salida']}:{fecha_salida_iso}", salida_data["moneda"])
@@ -591,6 +594,7 @@ def main(page: ft.Page):
         getBD()
         message(f"Boleto de salida generado. Total mostrado: {salida_data['total']}{tiempo_texto}")
         close_currency_dialog()
+
 
 
     def start_extraviado_flow(codigo: str):
@@ -606,8 +610,8 @@ def main(page: ft.Page):
         # Datos para ticket (fecha con formato bonito)
         salida_data = {
             "placa": codigo,
-            "hora_entrada": hora_iso,                      # entrada “virtual”
-            "fecha_entrada": formatear_fecha(fecha_iso),   # solo para mostrar
+            "hora_entrada": hora_iso,  
+            "fecha_entrada": formatear_fecha(fecha_iso), 
             "hora_salida": hora_iso,
             "fecha_salida": formatear_fecha(fecha_iso),
             "tipo": "Boleto Extraviado",
@@ -617,14 +621,14 @@ def main(page: ft.Page):
         # Reusar el mismo diálogo de cobro que usas para normales/pensión
         # con banderas para mostrar ambos precios (MXN y USD) en la UI.
         open_currency_dialog({
-            "mode": "extraviado",          # <- para que handle_currency_select sepa que no hay entrada real
-            "code": {"placa": codigo},     # dummy
+            "mode": "extraviado",          
+            "code": {"placa": codigo},   
             "price_mxn": price_mxn,
             "total_mxn": price_mxn,
             "salida_data": salida_data,
             "tiempo_texto": " | Tarifa Extraviado aplicada",
             "title": "Cobro boleto extraviado",
-            "show_dual": True,             # <- mostrar MXN y USD al mismo tiempo en el alert
+            "show_dual": True,            
             "entrada_hora_iso": hora_iso,
             "entrada_fecha_iso": fecha_iso,
             "salida_hora_iso": hora_iso,
@@ -650,17 +654,14 @@ def main(page: ft.Page):
             }
             insert_out(code[1], code[2], code[3], out_time, datetime.now().strftime("%Y-%m-%d"),
                     code[6], 0.0, 0.0)
-            
-            set_config(
-                f"moneda:{code[1]}:{out_time}:{datetime.now().strftime('%Y-%m-%d')}",
-                "MXN"
-            )
+            set_config(f"moneda:{code[1]}:{out_time}:{datetime.now().strftime('%Y-%m-%d')}", "MXN")
             delete_entry(code[1])
             if state["printer"]:
                 print_ticket_usb(printer_name=state["printer"], data=salida_data, entrada=False)
             getBD()
             message("Boleto de Hospedaje cerrado. Total: $0.00 MXN")
             return
+
         tiempo_texto = ""
         price_mxn = 0.0
         total_mxn = 0.0
@@ -674,7 +675,7 @@ def main(page: ft.Page):
             minutos = int((tiempo_total_segundos % 3600) // 60)
             tiempo_texto = f" | Tiempo: {horas}h {minutos}min"
 
-            if tiempo_total_segundos >= 36000:
+            if tiempo_total_segundos >= 36000:  # 10 horas → pensión diaria
                 _, precio_unitario = get_price_by_type("pension")
                 price_mxn = float(precio_unitario or 0.0)
                 total_mxn = price_mxn
@@ -691,7 +692,7 @@ def main(page: ft.Page):
                 except:
                     price_mxn = 0.0
 
-                total_mxn = price_mxn
+                total_mxn = price_mxn  # 1a hora
                 if horas >= 1:
                     horas_restantes = horas - 1
                     total_mxn += horas_restantes * price_mxn
@@ -699,14 +700,71 @@ def main(page: ft.Page):
                         total_mxn += (price_mxn / 2) if (minutos <= 30) else price_mxn
 
         elif code[6] == "Boleto Pensión":
+            # --- NUEVA LÓGICA: días + horas extra (hasta 6h a tarifa normal; >6h = +1 día) ---
             entrada = datetime.strptime(f"{code[3]} {code[2]}", "%Y-%m-%d %H:%M:%S")
             salida = datetime.now()
             duracion = salida - entrada
-            dias = duracion.days + 1 if duracion.seconds > 0 else duracion.days
-            _, precio_unitario = get_price_by_type("pension")
-            price_mxn = float(precio_unitario or 0.0)
-            total_mxn = price_mxn * max(dias, 1)
-            tiempo_texto = f" | Tarifa Pensión aplicada ({dias} días)"
+
+            # Precio de la pensión (por día)
+            _, precio_pension = get_price_by_type("pension")
+            pension_dia = float(precio_pension or 0.0)
+
+            # Días base cobrados:
+            if duracion.days == 0:
+                # Menos de 24h: se cobra al menos 1 día, sin extras
+                dias_cobrados = 1
+                extra_seg = 0
+            else:
+                dias_cobrados = duracion.days
+                extra_seg = duracion.seconds  # resto por encima de días completos
+
+            total_mxn = pension_dia * max(dias_cobrados, 1)
+            texto_extra = ""
+
+            # Si hay remanente sobre días completos, evaluar cargos extra
+            if extra_seg > 0:
+                extra_horas = int(extra_seg // 3600)
+                extra_min = int((extra_seg % 3600) // 60)
+
+                # Si excede 6h exactas, se considera otro día completo de pensión
+                if (extra_horas > 6) or (extra_horas == 6 and extra_min > 0):
+                    total_mxn += pension_dia
+                    texto_extra = " | +1 día por excedente > 6h"
+                else:
+                    # Cobrar horas extra con tarifa normal (respetando jueves especial 15–22 h)
+                    now = datetime.now()
+                    es_jueves = now.weekday() == 3
+                    es_hora_valida = 15 <= now.hour < 22
+                    aplicar_tarifa_especial = es_jueves and es_hora_valida
+
+                    _, precio_normal = get_price_by_day(aplicar_tarifa_especial)
+                    precio_normal = float(precio_normal or 0.0)
+
+                    # Esquema igual al de 'Boleto normal':
+                    #   - 1a hora completa si hay al menos 1h o hay solo minutos
+                    #   - luego horas completas
+                    #   - minutos: <=30 = 1/2 hora, >30 = 1 hora
+                    extra_cargo = 0.0
+                    if extra_horas == 0:
+                        if extra_min > 0:
+                            extra_cargo += (precio_normal / 2) if extra_min <= 30 else precio_normal
+                    else:
+                        # primera hora
+                        extra_cargo += precio_normal
+                        # horas adicionales
+                        if extra_horas > 1:
+                            extra_cargo += (extra_horas - 1) * precio_normal
+                        # minutos
+                        if extra_min > 0:
+                            extra_cargo += (precio_normal / 2) if extra_min <= 30 else precio_normal
+
+                    total_mxn += extra_cargo
+                    texto_extra = f" | Extras: {extra_horas}h {extra_min}min a tarifa normal"
+
+            tiempo_texto = f" | Tarifa Pensión aplicada ({max(dias_cobrados,1)} día(s)){texto_extra}"
+
+            # Para mostrar en el diálogo de moneda
+            price_mxn = pension_dia  # precio unitario de referencia (por día)
 
         elif code[6] == "Boleto Extraviado":
             _, precio_unitario = get_price_by_type("extraviado")
@@ -725,7 +783,7 @@ def main(page: ft.Page):
             "tipo": code[6],
         }
 
-        # 3) Abrir diálogo de moneda y finalizar según selección (solo NO-HOSPEDAJE)
+        # 3) Abrir diálogo de moneda y finalizar según selección
         open_currency_dialog({
             "code": code,
             "price_mxn": price_mxn,
@@ -736,11 +794,13 @@ def main(page: ft.Page):
 
 
 
+
     def delete_all(e):
         delete_all_outs()
         alert_delete_registers.open = False
         snack_bar = ft.SnackBar(ft.Text("Se han borrado los registros de salidas."))
         page.open(snack_bar)
+        page.update()
 
     def check_hospedaje_pending():
         boletos = get_entry_by_type("Boleto Hospedaje")
@@ -1539,7 +1599,7 @@ def main(page: ft.Page):
 
         check_hospedaje_pending()
 
-        # ✅ Ocultar pantalla de carga y mostrar interfaz real
+        # Ocultar pantalla de carga y mostrar interfaz real
         page.controls.clear()
         page.appbar = AppBar(business_name=state["business_name"], onChange=onChangePage, filters= filtro_tipo ).build()
         page.add(
