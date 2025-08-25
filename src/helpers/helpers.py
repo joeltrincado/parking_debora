@@ -1,28 +1,4 @@
-import qrcode
-from PIL import Image
-import io
-import base64
 import flet as ft
-
-
-def generate_qr_base64(data=None, box_size=10, border=4, fill_color="black", back_color="white"):
-    if not data:
-        return None
-    qr = qrcode.QRCode(
-        version=1,
-        error_correction=qrcode.constants.ERROR_CORRECT_L,
-        box_size=box_size,
-        border=border,
-    )
-    qr.add_data(data)
-    qr.make(fit=True)
-    img = qr.make_image(fill_color=fill_color, back_color=back_color).convert("RGB")
-    background = Image.new("RGB", (img.width + 20, img.height + 20), (255, 255, 255))
-    background.paste(img, (10, 10))
-
-    buffer = io.BytesIO()
-    background.save(buffer, format="PNG")
-    return base64.b64encode(buffer.getvalue()).decode()
 
 
 def getDatacell(data=None):

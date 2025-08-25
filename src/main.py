@@ -30,14 +30,16 @@ def main(page: ft.Page):
     state = {
     "current_tab": 0,
     "business_name": "Estacionamiento CECI",
-    "entries": [],
+    "entries": [],   
+    "entries_all": [],     
     "nBoxes": 19,
-    "nBoxesHospedaje": 2,  
+    "nBoxesHospedaje": 2,
     "config": None,
     "printer": None,
     "pending_checkout": None,
     "dolar_price": None
-    }
+}
+
 
     datacells = getDatacell(state["entries"])
     columns = getDataColumns(["FOLIO", "CÓDIGO", "FECHA", "HORA", "TIPO DE ENTRADA"])
@@ -65,19 +67,44 @@ def main(page: ft.Page):
     
     # FUCTIONS
 
+        # === Cajones disponibles por tipo + alerta no bloqueante ===
+    def _disponibles_por_tipo(tipo: str) -> int:
+        tipo = (tipo or "").strip()
+
+        actuales_normales = len([e for e in state["entries_all"] if e[6] in ("Boleto normal", "Boleto Pensión")])
+        actuales_hosp = len([e for e in state["entries_all"] if e[6] == "Boleto Hospedaje"])
+
+        if tipo in ("Boleto normal", "Boleto Pensión"):
+            return max(state["nBoxes"] - actuales_normales, 0)
+        elif tipo == "Boleto Hospedaje":
+            return max(state["nBoxesHospedaje"] - actuales_hosp, 0)
+        # Por defecto tratamos como normal
+        return max(state["nBoxes"] - actuales_normales, 0)
+
+
     def update_boxes_view():
         total_normales = state["nBoxes"]
         total_hosp = state["nBoxesHospedaje"]
 
-        actuales_normales = len([e for e in state["entries"] if e[6] in ("Boleto normal","Boleto Pensión")])
-        actuales_hosp = len([e for e in state["entries"] if e[6] == "Boleto Hospedaje"])
+        # Cuenta SIEMPRE sobre TODAS las entradas
+        actuales_normales = len([e for e in state["entries_all"] if e[6] in ("Boleto normal", "Boleto Pensión")])
+        actuales_hosp    = len([e for e in state["entries_all"] if e[6] == "Boleto Hospedaje"])
 
         disponibles_normales = max(total_normales - actuales_normales, 0)
-        disponibles_hosp = max(total_hosp - actuales_hosp, 0)
+        disponibles_hosp     = max(total_hosp - actuales_hosp, 0)
 
         boxs.value = str(disponibles_normales)
-        boxsText_hospedaje.value = str(disponibles_hosp)   # antes boxsText_hospedaje
+        boxsText_hospedaje.value = str(disponibles_hosp)
         page.update()
+
+
+
+    def warn_if_full(tipo: str):
+        """Muestra alerta si no hay espacio disponible, pero NO bloquea el flujo."""
+        disponibles = _disponibles_por_tipo(tipo)
+        if disponibles <= 0:
+            mensaje = "No hay espacio disponible para este tipo de boleto.\nSe imprimirá el boleto de todas formas."
+            open_full_alert(mensaje)
 
 
 
@@ -172,56 +199,69 @@ def main(page: ft.Page):
     )
     alert_ring.open = False
     
-    def send_email(file):
-        import os
-        from dotenv import load_dotenv;
+    def send_email(file: str):
+        # --- Imports locales para no contaminar el resto del módulo ---
+        import flet as ft
+        from datetime import datetime
         from pathlib import Path
         from email.mime.multipart import MIMEMultipart
         from email.mime.text import MIMEText
         from email.mime.application import MIMEApplication
         import smtplib
-        load_dotenv()
+        import os
 
-        # --- Variables de entorno ---
-        host = os.getenv("SMTP_HOST", "smtp.gmail.com")
-        port = int(os.getenv("SMTP_PORT", "587"))
-        user = os.getenv("SMTP_USER")  
-        password = os.getenv("SMTP_PASS") 
-        use_ssl = os.getenv("SMTP_SSL", "false").strip().lower() in ("1", "true", "yes", "on")
-        use_starttls = os.getenv("SMTP_STARTTLS", "true").strip().lower() in ("1", "true", "yes", "on")
+        # --- Config SMTP (hardcoded) ---
+        SMTP_HOST = "smtp.gmail.com"
+        SMTP_PORT = 587
+        SMTP_USER = "reportestectronic@gmail.com"
+        # ¡OJO! Los app passwords de Gmail van sin espacios:
+        SMTP_PASS = "tdllhiwbqmrzpqec"
+        USE_SSL = False
+        USE_STARTTLS = True
 
-        email_from = os.getenv("EMAIL_FROM", user or "")
-        email_to = [x.strip() for x in os.getenv("EMAIL_TO", email_from).split(",") if x.strip()]
-        subject_prefix = os.getenv("EMAIL_SUBJECT_PREFIX", "Reporte de salidas")
-        body_text = os.getenv("EMAIL_BODY", "Reporte de Usuarios")
+        # --- Datos de correo (hardcoded) ---
+        # Por políticas de Gmail, conviene que el From sea el mismo usuario autenticado.
+        EMAIL_FROM = SMTP_USER
+        EMAIL_REPLY_TO = "debora.cecilia.hc@gmail.com"   # aparecerá como dirección de respuesta
+        EMAIL_TO = ["debora.cecilia.hc@gmail.com"]
+        SUBJECT_PREFIX = "Reporte de salidas"
+        BODY_TEXT = "Reporte de Usuarios"
 
         # --- Componer mensaje ---
         message = MIMEMultipart()
-        message["From"] = email_from
-        message["To"] = ", ".join(email_to)
-        message["Subject"] = f"{subject_prefix} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        message.attach(MIMEText(body_text, "plain", "utf-8"))
+        message["From"] = EMAIL_FROM
+        message["To"] = ", ".join(EMAIL_TO)
+        message["Subject"] = f"{SUBJECT_PREFIX} {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        message["Reply-To"] = EMAIL_REPLY_TO
+        message.attach(MIMEText(BODY_TEXT, "plain", "utf-8"))
 
-        # Adjuntar CSV correctamente
-        with open(file, "rb") as f:
-            attachment = MIMEApplication(f.read(), _subtype="csv")
-        attachment.add_header("Content-Disposition", "attachment", filename=Path(file).name)
-        message.attach(attachment)
+        # Adjuntar archivo (CSV u otro)
+        try:
+            with open(file, "rb") as f:
+                attachment = MIMEApplication(f.read(), _subtype="octet-stream")
+            attachment.add_header("Content-Disposition", "attachment", filename=Path(file).name)
+            message.attach(attachment)
+        except Exception as e:
+            snack_bar = ft.SnackBar(
+                ft.Text(f"No se pudo adjuntar el archivo: {e}", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                bgcolor=ft.Colors.RED_400, duration=ft.Duration(seconds=4)
+            )
+            page.open(snack_bar)
+            page.update()
+            return
 
         # --- Envío ---
         try:
-            if use_ssl:
-                with smtplib.SMTP_SSL(host, port) as server:
-                    if user and password:
-                        server.login(user, password)
-                    server.sendmail(email_from, email_to, message.as_string())
+            if USE_SSL:
+                with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+                    server.login(SMTP_USER, SMTP_PASS)
+                    server.sendmail(EMAIL_FROM, EMAIL_TO, message.as_string())
             else:
-                with smtplib.SMTP(host, port) as server:
-                    if use_starttls:
+                with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+                    if USE_STARTTLS:
                         server.starttls()
-                    if user and password:
-                        server.login(user, password)
-                    server.sendmail(email_from, email_to, message.as_string())
+                    server.login(SMTP_USER, SMTP_PASS)
+                    server.sendmail(EMAIL_FROM, EMAIL_TO, message.as_string())
 
             snack_bar = ft.SnackBar(
                 ft.Text("Correo enviado correctamente", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
@@ -231,10 +271,12 @@ def main(page: ft.Page):
         except Exception as e:
             snack_bar = ft.SnackBar(
                 ft.Text(f"Error al enviar el correo: {e}", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
-                bgcolor=ft.Colors.RED_400, duration=ft.Duration(seconds=3)
+                bgcolor=ft.Colors.RED_400, duration=ft.Duration(seconds=4)
             )
             page.open(snack_bar)
-        page.update()
+        finally:
+            page.update()
+
 
 
     def download_report_csv(e):
@@ -352,19 +394,36 @@ def main(page: ft.Page):
         show_page(0)
         page.open(ft.SnackBar(ft.Text("Impresora configurada correctamente")))
 
-    def getBD(filtro="Todos"):
-        entradas = get_all_entries()
-        if filtro != "Todos":
-            entradas = [e for e in entradas if e[6] == filtro]
+    def getBD(filtro=None):
+        # 1) Cargar SIEMPRE todas las entradas
+        entradas_all = get_all_entries()
+        state["entries_all"] = entradas_all
 
-        state["entries"] = entradas
+        # 2) Determinar filtro actual (si no te pasan uno)
+        if filtro is None:
+            try:
+                filtro = filtro_tipo.value or "Todos"
+            except:
+                filtro = "Todos"
+
+        # 3) Generar las entradas visibles para la tabla según filtro
+        if filtro != "Todos":
+            entradas_visibles = [e for e in entradas_all if e[6] == filtro]
+        else:
+            entradas_visibles = entradas_all
+
+        state["entries"] = entradas_visibles
         state["dolar_price"] = float(get_dollar_price() or 20.0)
+
+        # 4) Refrescar la tabla con las visibles
         datacells = getDatacell(state["entries"])
         registers_database.rows.clear()
         registers_database.rows = datacells
 
-        update_boxes_view() 
+        # 5) Actualizar los contadores de cajones usando entries_all
+        update_boxes_view()
         page.update()
+
 
 
 
@@ -498,10 +557,6 @@ def main(page: ft.Page):
 
         update_totals()
         page.update()
-
-
-
-
 
     def close_currency_dialog():
         currency_alert.open = False
@@ -637,8 +692,10 @@ def main(page: ft.Page):
 
 
     def createOut(code):
-        fecha_salida_formato = formatear_fecha(datetime.now().strftime("%Y-%m-%d"))
-        out_time = datetime.now().strftime("%H:%M:%S")
+        # Tomamos un 'now' único para consistencia
+        now = datetime.now()
+        fecha_salida_formato = formatear_fecha(now.strftime("%Y-%m-%d"))
+        out_time = now.strftime("%H:%M:%S")
 
         if es_hospedaje(code[6]):
             salida_data = {
@@ -652,9 +709,12 @@ def main(page: ft.Page):
                 "precio_unitario": "0.00 MXN",
                 "moneda": "MXN",
             }
-            insert_out(code[1], code[2], code[3], out_time, datetime.now().strftime("%Y-%m-%d"),
-                    code[6], 0.0, 0.0)
-            set_config(f"moneda:{code[1]}:{out_time}:{datetime.now().strftime('%Y-%m-%d')}", "MXN")
+            insert_out(
+                code[1], code[2], code[3],
+                out_time, now.strftime("%Y-%m-%d"),
+                code[6], 0.0, 0.0
+            )
+            set_config(f"moneda:{code[1]}:{out_time}:{now.strftime('%Y-%m-%d')}", "MXN")
             delete_entry(code[1])
             if state["printer"]:
                 print_ticket_usb(printer_name=state["printer"], data=salida_data, entrada=False)
@@ -668,7 +728,7 @@ def main(page: ft.Page):
 
         if code[6] == "Boleto normal":
             entrada = datetime.strptime(f"{code[3]} {code[2]}", "%Y-%m-%d %H:%M:%S")
-            salida = datetime.now()
+            salida = now
             duracion = salida - entrada
             tiempo_total_segundos = duracion.total_seconds()
             horas = int(tiempo_total_segundos // 3600)
@@ -681,10 +741,8 @@ def main(page: ft.Page):
                 total_mxn = price_mxn
                 tiempo_texto += " | Tarifa tipo pensión aplicada"
             else:
-                now = datetime.now()
-                es_jueves = now.weekday() == 3
-                es_hora_valida = 15 <= now.hour < 22
-                aplicar_tarifa_especial = es_jueves and es_hora_valida
+                # ✅ Decidir tarifa por la HORA DE ENTRADA (jueves 15:00–21:59)
+                aplicar_tarifa_especial = (entrada.weekday() == 3) and (15 <= entrada.hour < 22)
 
                 _, precio_unitario = get_price_by_day(aplicar_tarifa_especial)
                 try:
@@ -692,7 +750,8 @@ def main(page: ft.Page):
                 except:
                     price_mxn = 0.0
 
-                total_mxn = price_mxn  # 1a hora
+                # 1a hora
+                total_mxn = price_mxn
                 if horas >= 1:
                     horas_restantes = horas - 1
                     total_mxn += horas_restantes * price_mxn
@@ -700,18 +759,17 @@ def main(page: ft.Page):
                         total_mxn += (price_mxn / 2) if (minutos <= 30) else price_mxn
 
         elif code[6] == "Boleto Pensión":
-            # --- NUEVA LÓGICA: días + horas extra (hasta 6h a tarifa normal; >6h = +1 día) ---
+            # --- Días + horas extra (hasta 6h a tarifa normal/jueves; >6h = +1 día) ---
             entrada = datetime.strptime(f"{code[3]} {code[2]}", "%Y-%m-%d %H:%M:%S")
-            salida = datetime.now()
+            salida = now
             duracion = salida - entrada
 
             # Precio de la pensión (por día)
             _, precio_pension = get_price_by_type("pension")
             pension_dia = float(precio_pension or 0.0)
 
-            # Días base cobrados:
+            # Días base cobrados
             if duracion.days == 0:
-                # Menos de 24h: se cobra al menos 1 día, sin extras
                 dias_cobrados = 1
                 extra_seg = 0
             else:
@@ -731,19 +789,12 @@ def main(page: ft.Page):
                     total_mxn += pension_dia
                     texto_extra = " | +1 día por excedente > 6h"
                 else:
-                    # Cobrar horas extra con tarifa normal (respetando jueves especial 15–22 h)
-                    now = datetime.now()
-                    es_jueves = now.weekday() == 3
-                    es_hora_valida = 15 <= now.hour < 22
-                    aplicar_tarifa_especial = es_jueves and es_hora_valida
+                    # ✅ Extras decididos por HORA DE ENTRADA (jueves 15:00–21:59)
+                    aplicar_tarifa_especial = (entrada.weekday() == 3) and (15 <= entrada.hour < 22)
 
                     _, precio_normal = get_price_by_day(aplicar_tarifa_especial)
                     precio_normal = float(precio_normal or 0.0)
 
-                    # Esquema igual al de 'Boleto normal':
-                    #   - 1a hora completa si hay al menos 1h o hay solo minutos
-                    #   - luego horas completas
-                    #   - minutos: <=30 = 1/2 hora, >30 = 1 hora
                     extra_cargo = 0.0
                     if extra_horas == 0:
                         if extra_min > 0:
@@ -759,11 +810,10 @@ def main(page: ft.Page):
                             extra_cargo += (precio_normal / 2) if extra_min <= 30 else precio_normal
 
                     total_mxn += extra_cargo
-                    texto_extra = f" | Extras: {extra_horas}h {extra_min}min a tarifa normal"
+                    etiqueta = "jueves" if aplicar_tarifa_especial else "normal"
+                    texto_extra = f" | Extras: {extra_horas}h {extra_min}min a tarifa {etiqueta}"
 
             tiempo_texto = f" | Tarifa Pensión aplicada ({max(dias_cobrados,1)} día(s)){texto_extra}"
-
-            # Para mostrar en el diálogo de moneda
             price_mxn = pension_dia  # precio unitario de referencia (por día)
 
         elif code[6] == "Boleto Extraviado":
@@ -772,7 +822,7 @@ def main(page: ft.Page):
             total_mxn = price_mxn
             tiempo_texto = " | Tarifa Extraviado aplicada"
 
-        # 2) Preparar datos base del ticket (total se llenará tras elegir moneda)
+        # 2) Datos base del ticket (el total se llenará tras elegir moneda)
         salida_data = {
             "placa": code[1],
             "hora_entrada": code[2],
@@ -791,6 +841,7 @@ def main(page: ft.Page):
             "salida_data": salida_data,
             "tiempo_texto": tiempo_texto
         })
+
 
 
 
@@ -952,7 +1003,7 @@ def main(page: ft.Page):
             "precio": "Precio Especial",
             "titulo": "  Hospedaje"
         }
-
+        warn_if_full("Boleto Hospedaje")
         insert_entry(entry["codigo"], entry["hora_entrada"], entry["fecha"],
                     entry["hora_salida"], entry["fecha_salida"],
                     "Boleto Hospedaje", entry["precio"], "Boleto Hospedaje")
@@ -1012,6 +1063,7 @@ def main(page: ft.Page):
                 return False
             try:
                 precio = 0.0
+                warn_if_full(tipo)
 
                 if tipo == "Boleto normal":
                     es_jueves = datetime.now().weekday() == 3
@@ -1064,6 +1116,7 @@ def main(page: ft.Page):
             imprimir_ticket_y_guardar(codigo, fecha, hora, "Boleto Pensión")
 
         elif valor == "hospedaje":
+            warn_if_full("Boleto Hospedaje")
             if not state["printer"]:
                 message("No hay impresora configurada. No se registró la entrada.")
                 return
@@ -1235,12 +1288,35 @@ def main(page: ft.Page):
         show_page(0)
         page.update()
 
+    
+        # Alerta informativa de estacionamiento lleno (no bloqueante)
+    def close_full_alert(e=None):
+        alert_full.open = False
+        page.update()
+
+    def open_full_alert(msg: str):
+        alert_full.title = ft.Text("Estacionamiento lleno")
+        alert_full.content = ft.Text(msg)
+        alert_full.actions = [ft.TextButton("Entendido", on_click=close_full_alert)]
+        alert_full.open = True
+        page.update()
+
     ############################################################################################################
  
     # PAGES
     input_normal_boxes = TextField(label="Cajones normales", keyboard_type=ft.KeyboardType.NUMBER).build()
     input_hospedaje_boxes = TextField(label="Cajones de hospedaje", keyboard_type=ft.KeyboardType.NUMBER).build()
     plateField = TextField(label="Placa").build()
+
+    alert_full = ft.AlertDialog(
+        modal=False,
+        title=ft.Text("Estacionamiento lleno"),
+        content=ft.Text(""),
+        actions=[ft.TextButton("Entendido", on_click=close_full_alert)],
+        shape=ft.RoundedRectangleBorder(radius=8),
+    )
+    alert_full.open = False
+
 
     alert_password = ft.AlertDialog(
     title=ft.Text("Autenticación requerida"),
@@ -1249,7 +1325,6 @@ def main(page: ft.Page):
         ft.TextButton("Cancelar", on_click=lambda e: close_password_alert())
     ], shape=ft.RoundedRectangleBorder(radius=10)
 )
-
 
     alert_lost_ticket = Alert(
         title="Boleto Extraviado",
@@ -1587,21 +1662,16 @@ def main(page: ft.Page):
             except:
                 pass
 
+        # Cargar límites de cajones (no actualiza contadores aquí)
         load_boxes_config()
-        update_boxes_view()
-        getBD()
-        price_fee_dolar.value = str(state["dolar_price"] or "")
-        # Cargar entradas y refrescar tabla
-        state["entries"] = get_all_entries()
-        datacells = getDatacell(state["entries"])
-        registers_database.rows.clear()
-        registers_database.rows = datacells
 
-        check_hospedaje_pending()
-
-        # Ocultar pantalla de carga y mostrar interfaz real
+        # Reemplazar pantalla de carga por la UI real
         page.controls.clear()
-        page.appbar = AppBar(business_name=state["business_name"], onChange=onChangePage, filters= filtro_tipo ).build()
+        page.appbar = AppBar(
+            business_name=state["business_name"],
+            onChange=onChangePage,
+            filters=filtro_tipo
+        ).build()
         page.add(
             ft.SafeArea(
                 ft.Column(
@@ -1611,17 +1681,37 @@ def main(page: ft.Page):
                         page_2,
                         alert,
                         alert_password,
-                        alert_hospedaje_pending ,
+                        alert_hospedaje_pending,
                         alert_clean_outs,
                         alert_lost_ticket,
                         alert_ring,
                         currency_alert,
-                    ], expand=True
-                ), expand=True
+                        alert_full,
+                    ],
+                    expand=True,
+                ),
+                expand=True,
             )
         )
+
+        # Poblar datos (tabla visible + contadores) en base a TODAS las entradas
+        try:
+            filtro_actual = filtro_tipo.value or "Todos"
+        except:
+            filtro_actual = "Todos"
+        getBD(filtro=filtro_actual)  # esto también llama update_boxes_view() internamente
+
+        # Reflejar tipo de cambio en el input (state["dolar_price"] lo setea getBD)
+        price_fee_dolar.value = str(state["dolar_price"] or "")
+        page.update()
+
+        # Revisar hospedajes pendientes (ya con UI montada)
+        check_hospedaje_pending()
+
+        # Focus al lector
         read_qr.focus()
         page.update()
+
 
     # Lanzar en segundo plano después de mostrar loading
     threading.Thread(target=load_background_data).start()

@@ -1,5 +1,4 @@
 import sqlite3
-import pandas as pd
 
 def create_connection():
     return sqlite3.connect("visitas.db")
@@ -206,31 +205,6 @@ def delete_all_outs():
             conn.commit()
     except sqlite3.Error as e:
         print(f"[DB] Error delete_all_outs: {e}")
-
-def add_prices_from_excel(path_excel):
-    """
-    path_excel: ruta al archivo Excel.
-    El Excel debe tener columnas: Código, Nombre, Empresa
-    """
-    df = pd.read_excel(path_excel)
-
-    conn = create_connection()
-    cursor = conn.cursor()
-
-    # Borra todos los usuarios anteriores
-    cursor.execute("DELETE FROM usuarios")
-
-    for _, row in df.iterrows():
-        cursor.execute("""
-            INSERT INTO prices (tiempo, tarifa)
-            VALUES (?, ?, )
-        """, (
-            str(row['Tiempo']).strip(),
-            str(row['Tarifa']).strip(),
-        ))
-
-    conn.commit()
-    conn.close()
 
 def set_all_prices(normal_name, normal_price, jueves_name, jueves_price, pension_name, pension_price, extraviado_name, extraviado_price):
     try:
