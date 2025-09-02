@@ -222,8 +222,10 @@ def main(page: ft.Page):
         # --- Datos de correo (hardcoded) ---
         # Por políticas de Gmail, conviene que el From sea el mismo usuario autenticado.
         EMAIL_FROM = SMTP_USER
-        EMAIL_REPLY_TO = "debora.cecilia.hc@gmail.com"   # aparecerá como dirección de respuesta
-        EMAIL_TO = ["debora.cecilia.hc@gmail.com"]
+        # EMAIL_REPLY_TO = "debora.cecilia.hc@gmail.com"   # aparecerá como dirección de respuesta
+        # EMAIL_TO = ["debora.cecilia.hc@gmail.com"]
+        EMAIL_REPLY_TO = "joeltrincadov@gmail.com"   # aparecerá como dirección de respuesta
+        EMAIL_TO = ["joeltrincadov@gmail.com"]
         SUBJECT_PREFIX = "Reporte de salidas"
         BODY_TEXT = "Reporte de Usuarios"
 
@@ -454,27 +456,30 @@ def main(page: ft.Page):
             value="MXN",
             content=ft.Row(
                 [
-                    ft.Radio(value="MXN", label="MXN"),
-                    ft.Radio(value="USD", label="USD", disabled=(tc <= 0)),
+                    ft.Radio(value="MXN", label="MXN", label_style=ft.TextStyle(weight=ft.FontWeight.BOLD, size=20)),
+                    ft.Radio(value="USD", label="USD", disabled=(tc <= 0), label_style=ft.TextStyle(weight=ft.FontWeight.BOLD, size=20)),
                 ]
             )
         )
 
         tc_text = ft.Text(
-            f"TC: {tc:.4f} MXN por 1 USD" if tc > 0 else "TC no configurado (habilita USD guardando un TC > 0)"
+            f"Tipo de cambio: {tc:.4f} MXN por 1 USD" if tc > 0 else "TC no configurado (habilita USD guardando un TC > 0)", 
+            size=22,
+            weight=ft.FontWeight.BOLD
         )
-        total_text = ft.Text("")      
-        change_text = ft.Text("")
-        dual_text = ft.Text("")            
-        unit_text = ft.Text("")          
+        total_text = ft.Text("", size=22, weight=ft.FontWeight.BOLD)      
+        change_text = ft.Text("", size=22, weight=ft.FontWeight.BOLD)
+        dual_text = ft.Text("", size=22, weight=ft.FontWeight.BOLD)            
+        unit_text = ft.Text("", size=22, weight=ft.FontWeight.BOLD)          
 
         amount_field = ft.TextField(
             label="Monto entregado",
             keyboard_type=ft.KeyboardType.NUMBER,
             on_change=lambda e: update_totals(),
-            on_submit=lambda e: on_confirm(),
+            # on_submit=lambda e: on_confirm(),
             autofocus=True,
-            width=250,
+            width=350,
+            text_size=22
         )
 
         btn_cancel = ft.TextButton("Cancelar", on_click=lambda e: close_currency_dialog())
@@ -517,6 +522,7 @@ def main(page: ft.Page):
                     unit_text.value = f"Tarifa: ${price_mxn:.2f} MXN"
 
             btn_ok.disabled = pay < total
+            amount_field.on_submit = lambda e: on_confirm() if not btn_ok.disabled else None
             page.update()
 
         def on_confirm():
@@ -548,15 +554,17 @@ def main(page: ft.Page):
 
         currency_alert.content = ft.Column(
             content_children,
-            spacing=8,
+            spacing=12,
             tight=True,
-            width=380
+            width=500
         )
         currency_alert.actions = [btn_cancel, btn_ok]
         currency_alert.open = True
 
         update_totals()
         page.update()
+        amount_field.focus()    
+        page.update()              
 
     def close_currency_dialog():
         currency_alert.open = False
@@ -1122,6 +1130,7 @@ def main(page: ft.Page):
                 return
             else:
                 alert.open = True
+                plateField.focus()
             page.update()
 
         elif valor == "extraviado":
